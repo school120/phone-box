@@ -320,47 +320,5 @@
 
   ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
   </script>
-
-  <!--
-  ========================= README.md (copy into your repo) =========================
-
-  # Phone Box Checker (MVP)
-
-  A single‑page web app to check a classroom phone box. Host on GitHub Pages.
-
-  ## Quick start
-  1. Create a repo (e.g., `phone-box-checker`).
-  2. Add this `index.html` to the repo root.
-  3. Create a `roster.csv` (optional but recommended) in the repo root with headers:
-
-     Person ID,Full Name,Security Number,Current Grade,Email 1
-     46268,Abish, Ethan,9A1,Grade 9,Ethan.Abish@frisch.org
-     51109,Abraham, Yosef,9A2,Grade 9,Yosef.Abraham@frisch.org
-
-     (Full Name can be `Last, First` or `First Last`; both load.)
-
-  4. Enable GitHub Pages (Settings → Pages → Deploy from branch → `main`/`root`).
-  5. Open the site and click **Load roster from repo (roster.csv)**. You can also upload a CSV manually.
-
-  ## Usage
-  - Set grid size (default 6×10 = 60 slots).
-  - Upload a photo of the box; click 4 corners (TL, TR, BR, BL) to calibrate.
-  - Assign students to slots once (or pre-map by Security Number order).
-  - Click **Analyze photo** to see missing phones.
-  - Click **Enroll from this photo** once so the app learns each phone (flags fakes later).
-  - Data stays local (localStorage). Use **Export JSON** for backup.
-
-  ## Privacy
-  All images and learned embeddings remain in the browser unless exported. If you commit `roster.csv`, it is public unless your repo is private—use a private repo for student data.
-
-  ## Tuning
-  - Presence threshold: search `density>0.02` in code.
-  - Similarity threshold: search `sim<0.75` in code.
-
-  ## Troubleshooting
-  - If `roster.csv` doesn’t load, check the filename, encoding (UTF‑8), and that it’s in the repo root.
-  - OpenCV.js / TF.js load from CDNs; ensure your network allows them.
-
-  -->
 </body>
 </html>
