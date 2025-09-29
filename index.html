@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>Phone Box Checker — Bottom‑of‑Phone Debug + Slot Overlay</title>
+  <title>Phone Box Checker — Blue‑Bar Anchored Slots (Debug Overlay)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .card{ background:#fff; border-radius:1rem; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:1rem; }
@@ -11,8 +11,9 @@
     .btn-primary{ background:#111827; color:#fff; border-color:#111827; }
     .overlay-wrap{ position:relative; }
     .overlay-canvas{ position:absolute; left:0; top:0; pointer-events:none; }
+    .small{ font-size:.8rem; color:#6b7280; }
+    .slider{ width:160px; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://docs.opencv.org/4.x/opencv.js"></script>
@@ -23,152 +24,229 @@
   <script>
   const { useEffect, useRef, useState } = React;
 
-  // Orientation options; default to 12×5 since your labels run left→right across 12
-  const ORIENTS = [ {rows:12, cols:5, name:'12×5'}, {rows:5, cols:12, name:'5×12'} ];
-
-  // Robust threshold (median + 1.5*MAD)
+  // ===== Utilities =====
   function robustThreshold(values){
     const a=[...values].sort((x,y)=>x-y); const n=a.length; if(!n) return 0.02;
-    const med = n%2? a[(n-1)/2] : (a[n/2-1]+a[n/2])/2;
-    const ad = a.map(v=>Math.abs(v-med)).sort((x,y)=>x-y);
-    const mad = n%2? ad[(n-1)/2] : (ad[n/2-1]+ad[n/2])/2;
-    let t = med + 1.5*mad; if(!isFinite(t)||t<=0) t = med*1.25 + 0.003; return Math.min(Math.max(t, med*1.05), med+0.05);
+    const med=n%2? a[(n-1)/2] : (a[n/2-1]+a[n/2])/2;
+    const ad=a.map(v=>Math.abs(v-med)).sort((x,y)=>x-y);
+    const mad=n%2? ad[(n-1)/2] : (ad[n/2-1]+ad[n/2])/2;
+    let t=med+1.5*mad; if(!isFinite(t)||t<=0) t=med*1.25+0.003; return Math.min(Math.max(t, med*1.05), med+0.05);
   }
 
-  function Header(){
-    return React.createElement('div',{className:'mb-3'},[
-      React.createElement('h1',{className:'text-2xl sm:text-3xl font-bold'},'Phone Box Checker — Bottom-of-Phone Debug'),
-      React.createElement('p',{className:'text-xs text-gray-600'},'We specifically look for the *bottom of a phone just above each blue number*. The overlay shows the 60 scan windows (green = full-slot, yellow = bottom band).')
-    ]);
+  function drawOverlay(imgEl, overlayCanvas, W, H, slots, bands){
+    const ov=overlayCanvas; const dispW=imgEl.clientWidth, dispH=imgEl.clientHeight; ov.width=dispW; ov.height=dispH;
+    const sx=dispW/W, sy=dispH/H; const ctx=ov.getContext('2d'); ctx.clearRect(0,0,ov.width,ov.height);
+    ctx.lineWidth=2; ctx.font='10px sans-serif'; ctx.textBaseline='top';
+    // Slots (green/red)
+    slots.forEach((s,i)=>{
+      const px=s.x*sx, py=s.y*sy, pw=s.w*sx, ph=s.h*sy; const present=s.present;
+      ctx.strokeStyle = present? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
+      ctx.strokeRect(px,py,pw,ph);
+      const pillW=20, pillH=12; ctx.fillStyle = present? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
+      ctx.fillRect(px+2,py+2,pillW,pillH); ctx.fillStyle='#fff'; ctx.fillText(String(i+1), px+6, py+3);
+    });
+    // Bottom bands (yellow)
+    const yctx=ctx; yctx.strokeStyle='rgba(240,200,0,0.95)';
+    bands.forEach(b=>{ yctx.strokeRect(b.x*sx, b.y*sy, b.w*sx, b.h*sy); });
+  }
+
+  // Find the blue number bars (HSV) and the per‑row blue patches to recover 12 columns.
+  function detectBarsAndColumns(cv, src, W, H, hsvRange){
+    const hsv=new cv.Mat(); cv.cvtColor(src,hsv,cv.COLOR_RGBA2HSV);
+    const low=new cv.Mat(hsv.rows,hsv.cols,hsv.type(), [hsvRange.hMin, hsvRange.sMin, hsvRange.vMin, 0]);
+    const high=new cv.Mat(hsv.rows,hsv.cols,hsv.type(), [hsvRange.hMax, 255, 255, 255]);
+    const mask=new cv.Mat(); cv.inRange(hsv, low, high, mask);
+    // Clean up
+    const k=cv.Mat.ones(3,3,cv.CV_8U); cv.morphologyEx(mask, mask, cv.MORPH_OPEN, k); cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, k);
+
+    // Bars = wide, thin components
+    const contours=new cv.MatVector(); const hier=new cv.Mat(); cv.findContours(mask, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    const bars=[];
+    for(let i=0;i<contours.size();i++){
+      const r=cv.boundingRect(contours.get(i));
+      const ar=r.width/(r.height+1e-6);
+      if(r.width>W*0.5 && r.height>H*0.01 && r.height<H*0.12 && ar>4){ bars.push(r); }
+    }
+    bars.sort((a,b)=> a.y-b.y);
+
+    // Keep up to 5 bars, merge near-duplicates
+    const merged=[]; const tol=H*0.02; // 2% height tolerance
+    for(const r of bars){ if(!merged.length || Math.abs(r.y-merged[merged.length-1].y)>tol){ merged.push(r); } }
+    const rowBars = merged.slice(0,5); // expected rows ≈ 5
+
+    // For columns, choose the bar with most blue blocks as reference
+    let refBar=null, refCenters=[];
+    for(const bar of rowBars){
+      const roi=mask.roi(bar);
+      const cts=new cv.MatVector(); const hh=new cv.Mat(); cv.findContours(roi, cts, hh, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      let centers=[];
+      for(let i=0;i<cts.size();i++){
+        const br=cv.boundingRect(cts.get(i)); // local coords in roi
+        const w=br.width, h=br.height; const ar=w/(h+1e-6);
+        if(w>W*0.015 && w<W*0.2 && h>H*0.01 && ar>1){ centers.push(bar.x+br.x+br.width/2); }
+      }
+      centers.sort((a,b)=>a-b);
+      // De-duplicate close centers
+      const uniq=[]; const minDx=W*0.02; centers.forEach(x=>{ if(!uniq.length || Math.abs(x-uniq[uniq.length-1])>minDx) uniq.push(x); });
+      if(uniq.length>refCenters.length){ refCenters=uniq; refBar=bar; }
+      roi.delete(); cts.delete(); hh.delete();
+    }
+
+    // If we couldn't lock 10–14 centers, fall back to equally spaced 12
+    if(refCenters.length<10){
+      const cols=12; const step=W/cols; refCenters = Array.from({length:cols}, (_,i)=> (i+0.5)*step);
+    }
+
+    hsv.delete(); low.delete(); high.delete(); mask.delete(); contours.delete(); hier.delete(); k.delete();
+    return { rowBars, colCenters: refCenters };
   }
 
   function App(){
-    const [orientIdx,setOrientIdx]=useState(0); // 0: 12×5 (default), 1: 5×12
     const [imageURL,setImageURL]=useState(null);
     const [busy,setBusy]=useState(false);
-    const [debugInfo,setDebugInfo]=useState(null);
+    const [stats,setStats]=useState(null);
+    const [hsvRange,setHsvRange]=useState({ hMin:100, hMax:135, sMin:60, vMin:50 });
+    const [bandPct,setBandPct]=useState(0.22);   // bottom band height as % of row height
+    const [marginPct,setMarginPct]=useState(0.06); // margin above blue bar before band
+    const [rotate,setRotate]=useState(0); // 0, 90, 180, 270
 
-    const imgRef=useRef(null);
-    const workCanvasRef=useRef(null);
-    const overlayRef=useRef(null);
+    const imgRef=useRef(null); const workRef=useRef(null); const overlayRef=useRef(null);
 
-    const onPhoto=(file)=>{ setImageURL(URL.createObjectURL(file)); setDebugInfo(null); };
+    const onPhoto=(file)=>{ setImageURL(URL.createObjectURL(file)); setStats(null); };
 
-    function drawOverlay(rectsFull, rectsBottom, W, H, present){
-      const imgEl = imgRef.current; const ov = overlayRef.current; if(!imgEl || !ov) return;
-      const dispW = imgEl.clientWidth; const dispH = imgEl.clientHeight; ov.width = dispW; ov.height = dispH;
-      const scaleX = dispW / W; const scaleY = dispH / H; const ctx = ov.getContext('2d'); ctx.clearRect(0,0,ov.width,ov.height);
-
-      ctx.lineWidth = 2; ctx.font = '10px sans-serif'; ctx.textBaseline='top';
-
-      // Full slot windows — color coded by presence (green present, red empty)
-      rectsFull.forEach((r,i)=>{
-        const px = r.x*scaleX, py = r.y*scaleY, pw = r.w*scaleX, ph = r.h*scaleY;
-        const isPresent = present && present[i];
-        ctx.strokeStyle = isPresent ? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
-        ctx.strokeRect(px, py, pw, ph);
-        // slot number pill
-        const pillW = 20, pillH = 12; ctx.fillStyle = isPresent ? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
-        ctx.fillRect(px+2, py+2, pillW, pillH);
-        ctx.fillStyle = '#fff'; ctx.fillText(String(i+1), px+6, py+3);
-      });
-
-      // Bottom bands (yellow) — where we look for the phone bottom edge above the blue number
-      ctx.strokeStyle = 'rgba(240,200,0,0.95)';
-      rectsBottom.forEach((r)=>{ ctx.strokeRect(r.x*scaleX, r.y*scaleY, r.w*scaleX, r.h*scaleY); });
-    });
-      // Bottom bands (yellow)
-      ctx.strokeStyle = 'rgba(240,200,0,0.95)';
-      rectsBottom.forEach((r)=>{ ctx.strokeRect(r.x*scaleX, r.y*scaleY, r.w*scaleX, r.h*scaleY); });
-    }
-
-    const analyze=async()=>{
-      if(!imageURL) { alert('Take/Upload a photo first.'); return; }
+    const analyze=()=>{
+      if(!imageURL){ alert('Add a photo first.'); return; }
       if(!window.cv){ alert('OpenCV not ready yet.'); return; }
       setBusy(true);
+      setTimeout(()=>{ try{ runAnalysis(); } finally{ setBusy(false); } }, 10);
+    };
 
-      const img = imgRef.current; const work = workCanvasRef.current; const W = img.naturalWidth, H = img.naturalHeight; const wctx = work.getContext('2d'); work.width=W; work.height=H; wctx.drawImage(img,0,0,W,H);
-      const cv=window.cv; const mat = cv.imread(work);
+    function runAnalysis(){
+      const img=imgRef.current; const work=workRef.current; let W=img.naturalWidth, H=img.naturalHeight;
+      const ctx=work.getContext('2d');
+      // Apply rotation if requested
+      if(rotate%180===0){ work.width=W; work.height=H; } else { work.width=H; work.height=W; }
+      ctx.save();
+      if(rotate===90){ ctx.translate(work.width,0); ctx.rotate(Math.PI/2); }
+      else if(rotate===180){ ctx.translate(work.width,work.height); ctx.rotate(Math.PI); }
+      else if(rotate===270){ ctx.translate(0,work.height); ctx.rotate(-Math.PI/2); }
+      ctx.drawImage(img,0,0,W,H); ctx.restore();
+      if(rotate%180!==0){ const tmp=W; W=H; H=tmp; }
 
-      // Grid from orient selection
-      const {rows, cols} = ORIENTS[orientIdx];
-      const cellW = Math.floor(W/cols), cellH = Math.floor(H/rows);
+      const cv=window.cv; const src=cv.imread(work);
 
-      const fullRects=[]; const bottomRects=[]; const densities=[]; const bottomDensities=[]; const present=[];
+      // 1) Detect blue bars and column centers
+      const { rowBars, colCenters } = detectBarsAndColumns(cv, src, W, H, hsvRange);
+      if(!rowBars.length){ src.delete(); alert('Could not find blue number bars. Try adjusting Hue/Sat sliders or rotate 90°.'); return; }
 
-      for(let r=0;r<rows;r++){
+      // Estimate row heights from bar y positions
+      const barsY=rowBars.map(b=> b.y + b.height/2).sort((a,b)=>a-b);
+      const rowHeights=[]; for(let i=0;i<barsY.length;i++){ const next=barsY[i+1]|| (barsY[i] + (i? (barsY[i]-barsY[i-1]) : (H/5))); rowHeights.push(Math.max(20, next - barsY[i])); }
+
+      // Build slot rectangles using column centers and per‑row band anchored above blue bar
+      const slots=[]; const bands=[];
+      const cols = 12; // expected
+      // Convert centers → column boundaries
+      const centers = colCenters.slice(0,cols);
+      // derive boundaries midpoints between centers
+      const bounds=[ centers[0] - (centers[1]-centers[0])/2 ];
+      for(let i=0;i<centers.length-1;i++){ bounds.push( (centers[i]+centers[i+1])/2 ); }
+      bounds.push( centers[centers.length-1] + (centers[centers.length-1]-centers[centers.length-2])/2 );
+
+      let slotIndex=0;
+      for(let r=0;r<Math.min(5,barsY.length);r++){
+        const barY=barsY[r]; const rh=rowHeights[r];
+        const bandH=Math.max(8, rh*bandPct); const bandY=barY - bandH - rh*marginPct;
         for(let c=0;c<cols;c++){
-          const x=c*cellW, y=r*cellH;
-          // full slot crop — inset slightly to avoid dividers
-          const fx = x + Math.floor(cellW*0.08), fy = y + Math.floor(cellH*0.08);
-          const fw = Math.floor(cellW*0.84), fh = Math.floor(cellH*0.84);
-          fullRects.push({x:fx,y:fy,w:fw,h:fh});
-          // bottom band crop — the thing you asked for (just above blue number)
-          const bx = x + Math.floor(cellW*0.10), by = y + Math.floor(cellH*0.70);
-          const bw = Math.floor(cellW*0.80), bh = Math.floor(cellH*0.18);
-          bottomRects.push({x:bx,y:by,w:bw,h:bh});
-
-          // Edge density for full slot
-          const roiFull = new cv.Rect(fx,fy,fw,fh); const cellFull = mat.roi(roiFull);
-          const g1=new cv.Mat(); cv.cvtColor(cellFull,g1,cv.COLOR_RGBA2GRAY); const b1=new cv.Mat(); cv.GaussianBlur(g1,b1,new cv.Size(5,5),0,0,cv.BORDER_DEFAULT); const e1=new cv.Mat(); cv.Canny(b1,e1,35,120);
-          densities.push(cv.countNonZero(e1)/(fw*fh)); g1.delete(); b1.delete(); e1.delete(); cellFull.delete();
-
-          // Edge density for bottom band (your main signal)
-          const roiB = new cv.Rect(bx,by,bw,bh); const cellB = mat.roi(roiB);
-          const g2=new cv.Mat(); cv.cvtColor(cellB,g2,cv.COLOR_RGBA2GRAY); const b2=new cv.Mat(); cv.GaussianBlur(g2,b2,new cv.Size(3,3),0,0,cv.BORDER_DEFAULT); const e2=new cv.Mat(); cv.Canny(b2,e2,30,100);
-          bottomDensities.push(cv.countNonZero(e2)/(bw*bh)); g2.delete(); b2.delete(); e2.delete(); cellB.delete();
+          const x0=bounds[c], x1=bounds[c+1]; const w=Math.max(8, x1-x0); const h=Math.max(20, rh*0.65);
+          const yTop = Math.max(0, barY - h - rh*0.10); // phone body window
+          // presence will rely mostly on bottom band just above labels
+          bands.push({ x: x0+Math.floor(w*0.10), y: Math.max(0, bandY), w: Math.floor(w*0.80), h: Math.min(bandH, rh*0.35) });
+          slots.push({ x: x0+Math.floor(w*0.08), y: yTop, w: Math.floor(w*0.84), h: h, present: false });
+          slotIndex++;
         }
       }
 
-      // Decide presence. We emphasize the bottom band; fall back to full slot if ambiguous
-      const thrFull = robustThreshold(densities);
-      const thrBottom = robustThreshold(bottomDensities);
-      for(let i=0;i<densities.length;i++){
-        const bottomLikely = bottomDensities[i] > thrBottom; // sign of phone bottom features
-        const fullLikely = densities[i] > thrFull;            // general presence backup
-        present.push(bottomLikely || fullLikely);
+      // 2) Presence detection emphasising the bottom band pattern
+      const densities=[]; const densitiesBottom=[];
+      for(let i=0;i<slots.length;i++){
+        const s=slots[i]; const b=bands[i];
+        // full slot
+        const roi1=new cv.Rect(s.x, s.y, s.w, s.h); const mat1=src.roi(roi1);
+        const g1=new cv.Mat(); cv.cvtColor(mat1,g1,cv.COLOR_RGBA2GRAY); const bl1=new cv.Mat(); cv.GaussianBlur(g1,bl1,new cv.Size(5,5),0,0,cv.BORDER_DEFAULT); const e1=new cv.Mat(); cv.Canny(bl1,e1,35,120);
+        densities.push(cv.countNonZero(e1)/(s.w*s.h)); g1.delete(); bl1.delete(); e1.delete(); mat1.delete();
+        // bottom band
+        const roi2=new cv.Rect(b.x, b.y, b.w, b.h); const mat2=src.roi(roi2);
+        const g2=new cv.Mat(); cv.cvtColor(mat2,g2,cv.COLOR_RGBA2GRAY); const bl2=new cv.Mat(); cv.GaussianBlur(g2,bl2,new cv.Size(3,3),0,0,cv.BORDER_DEFAULT); const e2=new cv.Mat(); cv.Canny(bl2,e2,30,100);
+        densitiesBottom.push(cv.countNonZero(e2)/(b.w*b.h)); g2.delete(); bl2.delete(); e2.delete(); mat2.delete();
       }
+      const thrFull=robustThreshold(densities); const thrBottom=robustThreshold(densitiesBottom);
+      for(let i=0;i<slots.length;i++){ slots[i].present = (densitiesBottom[i]>thrBottom) || (densities[i]>thrFull); }
 
-      // Draw overlay rectangles (green full slots, yellow bottom bands)
-      drawOverlay(fullRects, bottomRects, W, H, present);
+      // 3) Draw overlay
+      drawOverlay(imgRef.current, overlayRef.current, W, H, slots, bands);
 
-      setBusy(false);
-      setDebugInfo({ rows, cols, presentCount: present.filter(Boolean).length, thrFull, thrBottom, sampleFull: densities.slice(0,12), sampleBottom: bottomDensities.slice(0,12) });
-      mat.delete();
-    };
+      // Stats/debug
+      setStats({ bars: barsY.length, colsDetected: colCenters.length, thrFull, thrBottom, present: slots.filter(s=>s.present).length });
 
-    return React.createElement('div',{className:'max-w-5xl mx-auto space-y-4'},[
-      React.createElement(Header,{}),
+      src.delete();
+    }
+
+    return React.createElement('div',{className:'max-w-6xl mx-auto space-y-4'},[
+      React.createElement('div',{className:'card'},[
+        React.createElement('h1',{className:'text-2xl font-bold'},'Phone Box Checker — Blue‑Bar Anchored Slots'),
+        React.createElement('p',{className:'small'},'We first locate the blue number bars (by color in HSV), use their positions to anchor rows, then find ~12 blue patches across a bar to anchor columns. Each slot ROI is drawn in green/red with a yellow bottom band just above the blue number.')
+      ]),
 
       React.createElement('div',{className:'card'},[
-        React.createElement('div',{className:'flex flex-wrap items-center gap-2'},[
+        React.createElement('div',{className:'flex flex-wrap items-center gap-3 text-sm'},[
           React.createElement('label',{className:'btn'},['Take/Upload Photo', React.createElement('input',{type:'file',accept:'image/*',capture:'environment',className:'hidden',onChange:e=>{ const f=e.target.files?.[0]; if(f) onPhoto(f); }})]),
-          React.createElement('div',{className:'flex items-center gap-2 text-sm'},[
-            React.createElement('span',{},'Grid:'),
-            ...ORIENTS.map((o,i)=> React.createElement('label',{key:o.name,className:'flex items-center gap-1'},[
-              React.createElement('input',{type:'radio',name:'orient',checked:orientIdx===i,onChange:()=>setOrientIdx(i)}),
-              o.name
-            ]))
+          React.createElement('button',{className:'btn',onClick:()=>setRotate(r=> (r+90)%360)},'Rotate 90°'),
+          React.createElement('div',{className:'flex items-center gap-2'},[
+            React.createElement('span',{className:'small'},'Hue'),
+            React.createElement('input',{className:'slider',type:'range',min:80,max:150,step:1,value:hsvRange.hMin,onChange:e=>setHsvRange({...hsvRange,hMin:parseInt(e.target.value)})}),
+            React.createElement('span',{className:'small'},`${hsvRange.hMin}`),
+            React.createElement('span',{className:'small ml-2'},'→'),
+            React.createElement('input',{className:'slider',type:'range',min:90,max:170,step:1,value:hsvRange.hMax,onChange:e=>setHsvRange({...hsvRange,hMax:parseInt(e.target.value)})}),
+            React.createElement('span',{className:'small'},`${hsvRange.hMax}`)
           ]),
-          React.createElement('button',{className:'btn btn-primary',disabled:busy || !imageURL, onClick:analyze}, busy? 'Analyzing…' : 'Analyze & Show Rectangles')
+          React.createElement('div',{className:'flex items-center gap-2'},[
+            React.createElement('span',{className:'small'},'Sat min'),
+            React.createElement('input',{className:'slider',type:'range',min:0,max:255,step:1,value:hsvRange.sMin,onChange:e=>setHsvRange({...hsvRange,sMin:parseInt(e.target.value)})}),
+            React.createElement('span',{className:'small'},`${hsvRange.sMin}`)
+          ]),
+          React.createElement('div',{className:'flex items-center gap-2'},[
+            React.createElement('span',{className:'small'},'Val min'),
+            React.createElement('input',{className:'slider',type:'range',min:0,max:255,step:1,value:hsvRange.vMin,onChange:e=>setHsvRange({...hsvRange,vMin:parseInt(e.target.value)})}),
+            React.createElement('span',{className:'small'},`${hsvRange.vMin}`)
+          ]),
+          React.createElement('div',{className:'flex items-center gap-2'},[
+            React.createElement('span',{className:'small'},'Band %'),
+            React.createElement('input',{className:'slider',type:'range',min:10,max:40,step:1,value:Math.round(bandPct*100),onChange:e=>setBandPct(parseInt(e.target.value)/100)}),
+            React.createElement('span',{className:'small'},`${Math.round(bandPct*100)}%`)
+          ]),
+          React.createElement('div',{className:'flex items-center gap-2'},[
+            React.createElement('span',{className:'small'},'Above‑bar margin %'),
+            React.createElement('input',{className:'slider',type:'range',min:0,max:20,step:1,value:Math.round(marginPct*100),onChange:e=>setMarginPct(parseInt(e.target.value)/100)}),
+            React.createElement('span',{className:'small'},`${Math.round(marginPct*100)}%`)
+          ]),
+          React.createElement('button',{className:'btn btn-primary',onClick:analyze,disabled:busy || !imageURL}, busy? 'Analyzing…' : 'Analyze & Show Rectangles')
         ])
       ]),
 
       React.createElement('div',{className:'card'},[
-        React.createElement('h3',{className:'font-semibold mb-2'},'Photo + Scan Overlay'),
-        React.createElement('div',{className:'text-xs text-gray-600 mb-2'},'Legend: green = phone present, red = empty, yellow band = bottom-of-phone scan region'),
+        React.createElement('h3',{className:'font-semibold mb-2'},'Photo + Overlay'),
         React.createElement('div',{className:'overlay-wrap'},[
-          imageURL ? React.createElement('img',{ref:imgRef,src:imageURL,alt:'box',className:'w-full h-auto rounded'}) : React.createElement('div',{className:'text-sm text-gray-500 p-8'},'Add a photo to see green rectangles for all 60 slots (yellow bands mark the “bottom‑of‑phone” region).'),
+          imageURL ? React.createElement('img',{ref:imgRef,src:imageURL,alt:'box',className:'w-full h-auto rounded'}) : React.createElement('div',{className:'small p-8'},'Add a photo to see slot rectangles (green/red) and the yellow bottom bands anchored to the blue number bars.'),
           React.createElement('canvas',{ref:overlayRef,className:'overlay-canvas'})
         ]),
-        React.createElement('canvas',{ref:workCanvasRef,className:'hidden'})
+        React.createElement('canvas',{ref:workRef,className:'hidden'})
       ]),
 
-      debugInfo && React.createElement('div',{className:'card text-sm space-y-1'},[
-        React.createElement('div',{},`Grid: ${debugInfo.rows}×${debugInfo.cols}; Present count (est.): ${debugInfo.presentCount}`),
-        React.createElement('div',{},`Thresholds — full=${debugInfo.thrFull.toFixed(4)}, bottom=${debugInfo.thrBottom.toFixed(4)}`),
-        React.createElement('div',{className:'text-gray-500'},`Sample densities (full): ${debugInfo.sampleFull.map(x=>x.toFixed(4)).join(', ')}`),
-        React.createElement('div',{className:'text-gray-500'},`Sample densities (bottom): ${debugInfo.sampleBottom.map(x=>x.toFixed(4)).join(', ')}`)
+      stats && React.createElement('div',{className:'card small'},[
+        React.createElement('div',{},`Detected bars: ${stats.bars}, columns: ${stats.colsDetected}`),
+        React.createElement('div',{},`Thresholds — full: ${stats.thrFull.toFixed(4)}, bottom: ${stats.thrBottom.toFixed(4)}`),
+        React.createElement('div',{},`Estimated present slots: ${stats.present}`)
       ])
     ]);
   }
