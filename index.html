@@ -173,5 +173,12 @@
 
   ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
   </script>
+
+  <!-- README (short)
+    • Fixed 12×5 grid; no corner taps.
+    • Uses OpenCV edge density per cell for presence, and Tesseract OCR on the bottom strip of each cell to read labels (last name + slot number).
+    • Infers the box by matching OCR (last name + slot number) to your roster Security Numbers (supports 9–12 A–F, SM1/SM2; formats like 9B11, SM112, SM1-12).
+    • Place roster.csv in the repo root or upload it at runtime. Recommend a private repo to protect student data.
+  -->
 </body>
 </html>
