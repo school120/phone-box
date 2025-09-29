@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>Phone Box Checker (Auto‑detect Box, No Corner Taps)</title>
+  <title>Phone Box Checker — Auto mode (infer box, no corners)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .card{ background:#fff; border-radius:1rem; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:1rem; }
@@ -22,138 +22,106 @@
   <script>
   const { useEffect, useRef, useState } = React;
 
-  const ORIENTATIONS = [
-    { rows: 5, cols: 12, name: '5×12' },
-    { rows: 12, cols: 5, name: '12×5' }
-  ];
-
-  const STORAGE_KEYS = { roster: 'roster' };
-  const Storage = {
-    save: (k,v)=> localStorage.setItem(k, JSON.stringify(v)),
-    load: (k,f)=> { try { const r = localStorage.getItem(k); return r? JSON.parse(r): f; } catch { return f; } }
-  };
+  const ORIENTATIONS = [ { rows:5, cols:12, name:'5×12' }, { rows:12, cols:5, name:'12×5' } ];
+  const Storage = { save:(k,v)=>localStorage.setItem(k, JSON.stringify(v)), load:(k,f)=>{ try{ const r=localStorage.getItem(k); return r? JSON.parse(r):f; }catch{ return f; } } };
+  const STORAGE_KEYS = { roster:'roster' };
 
   function parseSecurityNumber(sn=''){
-    const s = String(sn).trim().toUpperCase();
-    if(!s) return null;
-    let m = s.match(/^\s*(SM\d+)\s*[- ]?\s*(\d{1,2})\s*$/);
-    if(m) return { box: m[1], slot: parseInt(m[2],10) };
-    m = s.match(/^(.*?)(\d{1,2})$/);
-    if(!m) return null;
-    const box = m[1];
-    const slot = parseInt(m[2],10);
-    if(!(slot>=1 && slot<=60)) return null;
-    return { box, slot };
+    const s=String(sn).trim().toUpperCase(); if(!s) return null;
+    let m=s.match(/^\s*(SM\d+)\s*[- ]?\s*(\d{1,2})\s*$/); if(m) return { box:m[1], slot:parseInt(m[2],10) };
+    m=s.match(/^(.*?)(\d{1,2})$/); if(!m) return null; const box=m[1]; const slot=parseInt(m[2],10); if(!(slot>=1 && slot<=60)) return null; return { box, slot };
   }
 
   function robustThreshold(values){
     const arr=[...values].sort((a,b)=>a-b); const n=arr.length; if(!n) return 0.02;
-    const med = n%2? arr[(n-1)/2] : (arr[n/2-1]+arr[n/2])/2;
-    const absDev = arr.map(v=>Math.abs(v-med)).sort((a,b)=>a-b);
-    const mad = n%2? absDev[(n-1)/2] : (absDev[n/2-1]+absDev[n/2])/2;
-    let thr = med + 1.5*mad; if(!isFinite(thr) || thr<=0) thr = med*1.25 + 0.003;
+    const med=n%2? arr[(n-1)/2] : (arr[n/2-1]+arr[n/2])/2;
+    const absDev=arr.map(v=>Math.abs(v-med)).sort((a,b)=>a-b);
+    const mad=n%2? absDev[(n-1)/2] : (absDev[n/2-1]+absDev[n/2])/2;
+    let thr=med + 1.5*mad; if(!isFinite(thr) || thr<=0) thr = med*1.25 + 0.003;
     return Math.min(Math.max(thr, med*1.05), med+0.05);
   }
 
   async function inferBoxWithFewLabels(cv, src, W, H, roster, rows, cols){
     const worker = await Tesseract.createWorker('eng');
-    const votes = {}; let scans = 0;
-    const maxRowsToSample = Math.min(rows, 3);
+    const votes={}; let scans=0; const maxRowsToSample=Math.min(rows,3);
     try{
       for(let r=0;r<maxRowsToSample;r++){
         for(let c=0;c<cols;c++){
           const cellW=Math.floor(W/cols), cellH=Math.floor(H/rows);
           const x=c*cellW, y=r*cellH, cw=cellW, ch=cellH;
-          const ly = y + Math.floor(ch*0.80); const lh = Math.floor(ch*0.18);
-          const lroi = new cv.Rect(x+2, Math.min(ly,H-1), Math.max(1,cw-4), Math.max(1,lh));
-          const lcell = src.roi(lroi);
-          const lcanvas=document.createElement('canvas'); lcanvas.width=lroi.width; lcanvas.height=lroi.height; cv.imshow(lcanvas, lcell);
-          const { data:{ text } } = await worker.recognize(lcanvas);
+          const ly=y+Math.floor(ch*0.80); const lh=Math.floor(ch*0.18);
+          const lroi=new cv.Rect(x+2, Math.min(ly,H-1), Math.max(1,cw-4), Math.max(1,lh));
+          const lcell=src.roi(lroi);
+          const canv=document.createElement('canvas'); canv.width=lroi.width; canv.height=lroi.height; cv.imshow(canv,lcell);
+          const { data:{ text } } = await worker.recognize(canv);
           lcell.delete(); scans++;
           const clean=text.replace(/[^A-Za-z0-9\-\s]/g,' ').replace(/\s+/g,' ').trim();
-          const numMatch = clean.match(/(\d{1,2})/);
-          const words = clean.split(' ').filter(Boolean);
-          const last = words.find(w=>/^[A-Za-z][A-Za-z\-']+$/.test(w));
-          if(!last || !numMatch) continue;
-          const slotHint = parseInt(numMatch[1],10);
-          const cands = roster.filter(r=> r.fullName.toLowerCase().includes(last.toLowerCase()));
+          const num=clean.match(/(\d{1,2})/); const words=clean.split(' ').filter(Boolean); const last=words.find(w=>/^[A-Za-z][A-Za-z\-']+$/.test(w));
+          if(!last || !num) continue; const slotHint=parseInt(num[1],10);
+          const cands=roster.filter(r=> r.fullName.toLowerCase().includes(last.toLowerCase()));
           for(const cand of cands){ const p=parseSecurityNumber(cand.securityNumber); if(p && p.slot===slotHint){ votes[p.box]=(votes[p.box]||0)+1; } }
-          const sorted = Object.entries(votes).sort((a,b)=> b[1]-a[1]);
-          if(sorted.length){
-            const lead = sorted[0][1]; const second = sorted[1]?.[1]||0; const confident = (lead>=3) || (lead>=2 && (lead-second)>=2);
-            if(confident){ await worker.terminate(); return { box: sorted[0][0], scans, votes }; }
-          }
+          const sorted=Object.entries(votes).sort((a,b)=> b[1]-a[1]);
+          if(sorted.length){ const lead=sorted[0][1]; const second=sorted[1]?.[1]||0; const confident=(lead>=3) || (lead>=2 && (lead-second)>=2); if(confident){ await worker.terminate(); return { box:sorted[0][0], scans, votes }; } }
         }
       }
     } finally { await worker.terminate(); }
-    const sorted = Object.entries(votes).sort((a,b)=> b[1]-a[1]);
-    return { box: sorted[0]?.[0]||null, scans, votes };
+    const sorted=Object.entries(votes).sort((a,b)=> b[1]-a[1]); return { box:sorted[0]?.[0]||null, scans, votes };
   }
 
   function Header(){
     return React.createElement('div',{className:'mb-2'},[
-      React.createElement('h1',{className:'text-2xl sm:text-3xl font-bold'},'Phone Box Checker (Auto‑detect Box, No Corner Taps)'),
-      React.createElement('p',{className:'text-xs sm:text-sm text-gray-600'},'Upload a photo → we read just enough labels to infer the box, then use slot presence to list who\'s missing. Supports 9–12 A–F and SM1/SM2 security numbers.')
+      React.createElement('h1',{className:'text-2xl font-bold'},'Phone Box Checker — Auto mode'),
+      React.createElement('p',{className:'text-xs text-gray-600'},'No corner taps. We OCR a few labels to infer the box, then detect slot presence and list who\'s missing from the roster.')
     ]);
   }
 
   function App(){
-    const [roster, setRoster] = useState(Storage.load(STORAGE_KEYS.roster, []));
-    const [imageURL, setImageURL] = useState(null);
-    const [busy, setBusy] = useState(false);
-    const [results, setResults] = useState(null);
-    const imgRef = useRef(null); const canvasRef = useRef(null);
+    const [roster,setRoster]=useState(Storage.load(STORAGE_KEYS.roster,[]));
+    const [imageURL,setImageURL]=useState(null);
+    const [busy,setBusy]=useState(false);
+    const [results,setResults]=useState(null);
+    const imgRef=useRef(null); const canvasRef=useRef(null);
 
     useEffect(()=>{ (async()=>{ try{ const res=await fetch('roster.csv',{cache:'no-store'}); if(res.ok){ const text=await res.text(); const parsed=Papa.parse(text,{header:true,skipEmptyLines:true}); const rows=parsed.data.map(r=>({ personId:String(r['Person ID']||r.personId||'').trim(), fullName:String(r['Full Name']||r.fullName||'').trim(), securityNumber:String(r['Security Number']||r.securityNumber||'').trim(), grade:String(r['Current Grade']||r.grade||'').trim(), email:String(r['Email 1']||r.email||'').trim() })).filter(r=>r.personId && r.fullName); if(rows.length) setRoster(rows); } }catch(e){} })(); },[]);
 
-    const onUploadCSV = (file)=>{ Papa.parse(file,{header:true,skipEmptyLines:true,complete:(res)=>{ const rows=res.data.map(r=>({ personId:String(r['Person ID']||'').trim(), fullName:String(r['Full Name']||'').trim(), securityNumber:String(r['Security Number']||'').trim(), grade:String(r['Current Grade']||'').trim(), email:String(r['Email 1']||'').trim() })).filter(r=>r.personId && r.fullName); setRoster(rows); Storage.save(STORAGE_KEYS.roster, rows); }}); };
+    const onUploadCSV=(file)=>{ Papa.parse(file,{header:true,skipEmptyLines:true,complete:(res)=>{ const rows=res.data.map(r=>({ personId:String(r['Person ID']||'').trim(), fullName:String(r['Full Name']||'').trim(), securityNumber:String(r['Security Number']||'').trim(), grade:String(r['Current Grade']||'').trim(), email:String(r['Email 1']||'').trim() })).filter(r=>r.personId && r.fullName); setRoster(rows); Storage.save(STORAGE_KEYS.roster,rows); }}); };
+    const onPhoto=(file)=>{ setImageURL(URL.createObjectURL(file)); setResults(null); };
 
-    const onPhoto = (file)=>{ setImageURL(URL.createObjectURL(file)); setResults(null); };
-
-    const analyze = async ()=>{
+    const analyze=async()=>{
       if(!imageURL){ alert('Take/Upload a photo first.'); return; }
       if(!window.cv){ alert('OpenCV not ready yet.'); return; }
       setBusy(true);
 
-      const img = imgRef.current; const canvas = canvasRef.current; const W = img.naturalWidth, H = img.naturalHeight; const ctx = canvas.getContext('2d');
-      canvas.width=W; canvas.height=H; ctx.drawImage(img,0,0,W,H);
-      const cv = window.cv; const src = cv.imread(canvas);
+      const img=imgRef.current; const canvas=canvasRef.current; const W=img.naturalWidth, H=img.naturalHeight; const ctx=canvas.getContext('2d'); canvas.width=W; canvas.height=H; ctx.drawImage(img,0,0,W,H);
+      const cv=window.cv; const src=cv.imread(canvas);
 
-      // Try both orientations and choose the one with strongest box vote from a tiny sample of OCR reads
-      let best = { box:null, scans:0, votes:{}, rows: ORIENTATIONS[0].rows, cols: ORIENTATIONS[0].cols, orientationName: ORIENTATIONS[0].name };
-      for(const orient of ORIENTATIONS){
-        const r = await inferBoxWithFewLabels(cv, src, W, H, roster, orient.rows, orient.cols);
-        const score = (r.votes[r.box]||0);
-        if(score > (best.votes[best.box]||0)) best = { ...r, rows: orient.rows, cols: orient.cols, orientationName: orient.name };
-      }
-      const inferredBox = best.box; const rows = best.rows; const cols = best.cols;
+      // Auto-infer box/orientation with a handful of labels
+      let best={ box:null, scans:0, votes:{}, rows:ORIENTATIONS[0].rows, cols:ORIENTATIONS[0].cols, orientationName:ORIENTATIONS[0].name };
+      for(const orient of ORIENTATIONS){ const r=await inferBoxWithFewLabels(cv, src, W, H, roster, orient.rows, orient.cols); const score=(r.votes[r.box]||0); if(score>(best.votes[best.box]||0)) best={ ...r, rows:orient.rows, cols:orient.cols, orientationName:orient.name }; }
+      const inferredBox=best.box; const rows=best.rows; const cols=best.cols;
 
-      // Presence detection across all cells for the chosen orientation
+      // Presence detection — sample *middle 60%* height of each bay so we don't just see the bottom labels
       const present=[]; const densities=[]; const cellW=Math.floor(W/cols), cellH=Math.floor(H/rows);
       for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
         const x=c*cellW, y=r*cellH, cw=cellW, ch=cellH;
-        const roi=new cv.Rect(x+Math.floor(cw*0.10), y+Math.floor(ch*0.08), Math.floor(cw*0.80), Math.floor(ch*0.70));
+        const roi=new cv.Rect(x+Math.floor(cw*0.10), y+Math.floor(ch*0.15), Math.floor(cw*0.80), Math.floor(ch*0.60));
         const cell=src.roi(roi);
         const gray=new cv.Mat(); cv.cvtColor(cell,gray,cv.COLOR_RGBA2GRAY);
         const blur=new cv.Mat(); cv.GaussianBlur(gray,blur,new cv.Size(5,5),0,0,cv.BORDER_DEFAULT);
         const edges=new cv.Mat(); cv.Canny(blur,edges,35,120);
-        const density = cv.countNonZero(edges)/(roi.width*roi.height);
+        const density=cv.countNonZero(edges)/(roi.width*roi.height);
         densities.push(density);
         gray.delete(); blur.delete(); edges.delete(); cell.delete();
       }
-      const thr = robustThreshold(densities);
-      for(const d of densities) present.push(d>thr);
+      const thr=robustThreshold(densities); for(const d of densities) present.push(d>thr);
 
-      const occupiedSlots = new Set(); for(let i=0;i<present.length;i++) if(present[i]) occupiedSlots.add(i+1);
+      const occupiedSlots=new Set(); for(let i=0;i<present.length;i++) if(present[i]) occupiedSlots.add(i+1);
 
       const missing=[]; const presentStudents=[];
-      if(inferredBox){
-        const boxStudents = roster.filter(r=>{ const p=parseSecurityNumber(r.securityNumber); return p && p.box===inferredBox; });
-        boxStudents.forEach(stu=>{ const p=parseSecurityNumber(stu.securityNumber); if(!p) return; if(occupiedSlots.has(p.slot)) presentStudents.push(stu); else missing.push(stu); });
-      }
+      if(inferredBox){ const boxStudents=roster.filter(r=>{ const p=parseSecurityNumber(r.securityNumber); return p && p.box===inferredBox; }); boxStudents.forEach(stu=>{ const p=parseSecurityNumber(stu.securityNumber); if(!p) return; if(occupiedSlots.has(p.slot)) presentStudents.push(stu); else missing.push(stu); }); }
 
       src.delete(); setBusy(false);
-      setResults({ inferredBox, orientation: best.orientationName, votes: best.votes, scans: best.scans, presentCount: occupiedSlots.size, rows, cols, missing, presentStudents, threshold: thr });
+      setResults({ inferredBox, orientation:best.orientationName, votes:best.votes, scans:best.scans, presentCount:occupiedSlots.size, rows, cols, missing, presentStudents, threshold:thr });
     };
 
     return React.createElement('div',{className:'max-w-5xl mx-auto space-y-4'},[
@@ -163,7 +131,7 @@
         React.createElement('div',{className:'flex flex-wrap items-center gap-2 text-sm'},[
           React.createElement('label',{className:'btn'},['Upload CSV', React.createElement('input',{type:'file',accept:'.csv',className:'hidden',onChange:e=>{ const f=e.target.files?.[0]; if(f) onUploadCSV(f); }})]),
           React.createElement('a',{href:'roster.csv',className:'btn',download:true},'Download current roster.csv'),
-          React.createElement('span',{className:'text-xs text-gray-500'},'We only OCR a few labels to infer the box. Missing names come from roster × slot presence.')
+          React.createElement('span',{className:'text-xs text-gray-500'},'We read a few labels to infer the box; then we use slot presence to list who\'s missing.')
         ])
       ]),
       React.createElement('div',{className:'card'},[
@@ -180,7 +148,7 @@
       results && React.createElement('div',{className:'card space-y-2'},[
         React.createElement('h3',{className:'font-semibold'},`Results ${results.inferredBox? '— Box '+results.inferredBox:''} ${results.orientation? ' ('+results.orientation+')':''}`),
         React.createElement('div',{},`Detected occupied bays: ${results.presentCount} (grid ${results.rows}×${results.cols})`),
-        results.inferredBox ? null : React.createElement('div',{className:'text-xs text-amber-700'},'Could not confidently infer a box. Make sure a few labels are readable and roster.csv is loaded.'),
+        results.inferredBox ? null : React.createElement('div',{className:'text-xs text-amber-700'},'Could not confidently infer a box. Ensure a few labels are readable and roster.csv is loaded.'),
         (results.missing && results.missing.length>0) ? React.createElement('div',{},[
           React.createElement('div',{className:'text-sm text-gray-700 font-medium'},'Missing phones ('+results.missing.length+')'),
           React.createElement('ul',{className:'list-disc list-inside text-sm'}, results.missing.map(stu=> React.createElement('li',{key:stu.personId}, `${stu.fullName} — ${stu.securityNumber}`)))
@@ -191,11 +159,5 @@
 
   ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
   </script>
-  <!-- README
-    • Minimal-OCR flow: read a handful of labels to infer which box this is, then compute missing via slot presence vs roster mapping.
-    • Auto-tries 5×12 and 12×5 orientations; picks best vote.
-    • Adaptive presence threshold (median + 1.5×MAD). ROI cropped to avoid dividers.
-    • Security Number formats supported: 9B11, 10F7, 12C42, SM112, SM1-12, SM1 12.
-  -->
 </body>
 </html>
