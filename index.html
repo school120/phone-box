@@ -54,14 +54,29 @@
 
     const onPhoto=(file)=>{ setImageURL(URL.createObjectURL(file)); setDebugInfo(null); };
 
-    function drawOverlay(rectsFull, rectsBottom, W, H){
+    function drawOverlay(rectsFull, rectsBottom, W, H, present){
       const imgEl = imgRef.current; const ov = overlayRef.current; if(!imgEl || !ov) return;
       const dispW = imgEl.clientWidth; const dispH = imgEl.clientHeight; ov.width = dispW; ov.height = dispH;
       const scaleX = dispW / W; const scaleY = dispH / H; const ctx = ov.getContext('2d'); ctx.clearRect(0,0,ov.width,ov.height);
+
       ctx.lineWidth = 2; ctx.font = '10px sans-serif'; ctx.textBaseline='top';
-      // Full slot windows (green)
-      ctx.strokeStyle = 'rgba(0,200,0,0.95)';
-      rectsFull.forEach((r,i)=>{ ctx.strokeRect(r.x*scaleX, r.y*scaleY, r.w*scaleX, r.h*scaleY); const sx=r.x*scaleX+2, sy=r.y*scaleY+2; ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(sx,sy,18,12); ctx.fillStyle='#fff'; ctx.fillText(String(i+1), sx+3, sy+1); });
+
+      // Full slot windows — color coded by presence (green present, red empty)
+      rectsFull.forEach((r,i)=>{
+        const px = r.x*scaleX, py = r.y*scaleY, pw = r.w*scaleX, ph = r.h*scaleY;
+        const isPresent = present && present[i];
+        ctx.strokeStyle = isPresent ? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
+        ctx.strokeRect(px, py, pw, ph);
+        // slot number pill
+        const pillW = 20, pillH = 12; ctx.fillStyle = isPresent ? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
+        ctx.fillRect(px+2, py+2, pillW, pillH);
+        ctx.fillStyle = '#fff'; ctx.fillText(String(i+1), px+6, py+3);
+      });
+
+      // Bottom bands (yellow) — where we look for the phone bottom edge above the blue number
+      ctx.strokeStyle = 'rgba(240,200,0,0.95)';
+      rectsBottom.forEach((r)=>{ ctx.strokeRect(r.x*scaleX, r.y*scaleY, r.w*scaleX, r.h*scaleY); });
+    });
       // Bottom bands (yellow)
       ctx.strokeStyle = 'rgba(240,200,0,0.95)';
       rectsBottom.forEach((r)=>{ ctx.strokeRect(r.x*scaleX, r.y*scaleY, r.w*scaleX, r.h*scaleY); });
@@ -115,7 +130,7 @@
       }
 
       // Draw overlay rectangles (green full slots, yellow bottom bands)
-      drawOverlay(fullRects, bottomRects, W, H);
+      drawOverlay(fullRects, bottomRects, W, H, present);
 
       setBusy(false);
       setDebugInfo({ rows, cols, presentCount: present.filter(Boolean).length, thrFull, thrBottom, sampleFull: densities.slice(0,12), sampleBottom: bottomDensities.slice(0,12) });
@@ -141,6 +156,7 @@
 
       React.createElement('div',{className:'card'},[
         React.createElement('h3',{className:'font-semibold mb-2'},'Photo + Scan Overlay'),
+        React.createElement('div',{className:'text-xs text-gray-600 mb-2'},'Legend: green = phone present, red = empty, yellow band = bottom-of-phone scan region'),
         React.createElement('div',{className:'overlay-wrap'},[
           imageURL ? React.createElement('img',{ref:imgRef,src:imageURL,alt:'box',className:'w-full h-auto rounded'}) : React.createElement('div',{className:'text-sm text-gray-500 p-8'},'Add a photo to see green rectangles for all 60 slots (yellow bands mark the “bottom‑of‑phone” region).'),
           React.createElement('canvas',{ref:overlayRef,className:'overlay-canvas'})
