@@ -1,0 +1,586 @@
+import React, { useEffect, useRef, useState } from "react";
+
+// --- External libs via CDNs provided by the ChatGPT canvas runtime ---
+// We assume these are available in the browser at runtime when hosted on GitHub Pages.
+// - OpenCV.js (WASM): https://docs.opencv.org/4.x/d4/da1/tutorial_js_setup.html
+// - TensorFlow.js + MobileNet: https://www.tensorflow.org/js
+// - PapaParse (CSV): https://www.papaparse.com/
+
+export default function App() {
+  return (
+    <div className="min-h-screen bg-gray-50 text-gray-900 p-6">
+      <div className="max-w-6xl mx-auto space-y-6">
+        <Header />
+        <SetupWizard />
+      </div>
+    </div>
+  );
+}
+
+function Header() {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <h1 className="text-3xl font-bold">Phone Box Checker (MVP)</h1>
+        <p className="text-sm text-gray-600">
+          Capture a photo of a class phone box (up to 60 slots), detect empty slots, and flag mismatched phones (after enrollment). All data stays in your browser unless you export it.
+        </p>
+      </div>
+      <div className="text-right text-xs text-gray-500">
+        <p>Host-ready: single HTML file via GitHub Pages.</p>
+        <p>Tech: React, OpenCV.js, TensorFlow.js (MobileNet), PapaParse.</p>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------
+// Data Models & Utilities
+// ------------------------------
+
+const DEFAULT_GRID = { rows: 6, cols: 10 }; // 60 slots by default
+
+const Storage = {
+  save(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+  },
+  load(key, fallback) {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  },
+};
+
+function cosineSimilarity(a, b) {
+  if (!a || !b || a.length !== b.length) return 0;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-8);
+}
+
+function downloadJson(filename, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ------------------------------
+// Global lazy loaders (OpenCV, TFJS, MobileNet)
+// ------------------------------
+
+const useExternalScripts = () => {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const scripts = [
+      { src: "https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" },
+      { src: "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js" },
+      { src: "https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0" },
+      { src: "https://docs.opencv.org/4.x/opencv.js" },
+    ];
+    let loaded = 0;
+    scripts.forEach(({ src }) => {
+      const s = document.createElement("script");
+      s.src = src; s.async = true;
+      s.onload = () => { loaded++; if (loaded === scripts.length) setReady(true); };
+      s.onerror = () => console.error("Failed loading", src);
+      document.body.appendChild(s);
+    });
+  }, []);
+  return ready;
+};
+
+// ------------------------------
+// Setup & Workflow
+// ------------------------------
+
+function SetupWizard() {
+  const scriptsReady = useExternalScripts();
+  const [roster, setRoster] = useState(Storage.load("roster", []));
+  const [grid, setGrid] = useState(Storage.load("grid", DEFAULT_GRID));
+  const [assignments, setAssignments] = useState(Storage.load("assignments", {})); // slotKey -> personId
+  const [gallery, setGallery] = useState(Storage.load("gallery", {})); // personId -> embedding array
+  const [mobilenetReady, setMobilenetReady] = useState(false);
+  const mobilenetRef = useRef(null);
+
+  useEffect(() => {
+    if (!scriptsReady) return;
+    const init = async () => {
+      try {
+        // @ts-ignore
+        mobilenetRef.current = await window.mobilenet.load({ version: 2, alpha: 1.0 });
+        setMobilenetReady(true);
+      } catch (e) { console.error(e); }
+    };
+    init();
+  }, [scriptsReady]);
+
+  useEffect(() => Storage.save("roster", roster), [roster]);
+  useEffect(() => Storage.save("grid", grid), [grid]);
+  useEffect(() => Storage.save("assignments", assignments), [assignments]);
+  useEffect(() => Storage.save("gallery", gallery), [gallery]);
+
+  return (
+    <div className="space-y-6">
+      <Card title="1) Import roster (CSV or Excel exported to CSV)">
+        <RosterUploader onRoster={setRoster} />
+        {roster.length > 0 && (<RosterTable roster={roster} />)}
+      </Card>
+
+      <Card title="2) Configure your box grid (rows × cols)">
+        <div className="flex items-center gap-4">
+          <NumberInput label="Rows" value={grid.rows} min={1} max={12} onChange={(v)=>setGrid({ ...grid, rows: v })} />
+          <NumberInput label="Cols" value={grid.cols} min={1} max={12} onChange={(v)=>setGrid({ ...grid, cols: v })} />
+          <div className="text-xs text-gray-500">Total slots: <b>{grid.rows * grid.cols}</b></div>
+        </div>
+      </Card>
+
+      <Card title="3) Calibrate & capture a box photo">
+        <CalibrateAndCapture grid={grid} assignments={assignments} setAssignments={setAssignments} roster={roster} mobilenetReady={mobilenetReady} mobilenetRef={mobilenetRef} gallery={gallery} setGallery={setGallery} />
+      </Card>
+
+      <Card title="4) Data export/import">
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <button className="px-3 py-2 rounded-2xl bg-gray-900 text-white" onClick={()=>downloadJson("phone-box-data.json", { roster, grid, assignments, gallery })}>Export JSON</button>
+          <label className="px-3 py-2 rounded-2xl bg-white border cursor-pointer">
+            Import JSON
+            <input type="file" accept="application/json" className="hidden" onChange={(e)=>{
+              const f = e.target.files?.[0]; if (!f) return;
+              const r = new FileReader();
+              r.onload = () => {
+                try {
+                  const obj = JSON.parse(String(r.result));
+                  setRoster(obj.roster || []);
+                  setGrid(obj.grid || DEFAULT_GRID);
+                  setAssignments(obj.assignments || {});
+                  setGallery(obj.gallery || {});
+                } catch (err) { alert("Invalid JSON"); }
+              };
+              r.readAsText(f);
+            }} />
+          </label>
+          <div className="text-xs text-gray-500">Data is stored in your browser (localStorage).</div>
+        </div>
+      </Card>
+
+      <Footnote />
+    </div>
+  );
+}
+
+function Card({ title, children }) {
+  return (
+    <div className="bg-white rounded-2xl shadow p-4">
+      <h2 className="text-lg font-semibold mb-3">{title}</h2>
+      {children}
+    </div>
+  );
+}
+
+function NumberInput({ label, value, onChange, min=1, max=60 }) {
+  return (
+    <label className="flex items-center gap-2">
+      <span className="text-sm w-24">{label}</span>
+      <input type="number" className="border rounded px-2 py-1 w-24" value={value} min={min} max={max} onChange={(e)=>onChange(Math.max(min, Math.min(max, parseInt(e.target.value||"0"))))} />
+    </label>
+  );
+}
+
+function RosterUploader({ onRoster }) {
+  return (
+    <div className="flex items-center gap-3 text-sm">
+      <label className="px-3 py-2 rounded-2xl bg-white border cursor-pointer">
+        Upload CSV
+        <input type="file" accept=".csv" className="hidden" onChange={(e)=>{
+          const file = e.target.files?.[0];
+          if (!file) return;
+          // @ts-ignore
+          window.Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            complete: (results) => {
+              const rows = results.data.map((r)=>({
+                personId: String(r["Person ID"] || r.personId || r.id || "").trim(),
+                fullName: String(r["Full Name"] || r.fullName || r.name || "").trim(),
+                securityNumber: String(r["Security Number"] || r.securityNumber || "").trim(),
+                grade: String(r["Current Grade"] || r.grade || "").trim(),
+                email: String(r["Email 1"] || r.email || "").trim(),
+              })).filter(r=>r.personId && r.fullName);
+              onRoster(rows);
+            }
+          });
+        }} />
+      </label>
+      <a className="underline" href="https://gist.githubusercontent.com/" target="_blank" rel="noreferrer">Sample format</a>
+      <span className="text-xs text-gray-500">Required columns: Person ID, Full Name. Optional: Security Number, Grade, Email.</span>
+    </div>
+  );
+}
+
+function RosterTable({ roster }) {
+  return (
+    <div className="overflow-auto max-h-64 border rounded">
+      <table className="min-w-full text-sm">
+        <thead className="bg-gray-100 sticky top-0">
+          <tr>
+            <th className="text-left p-2">Person ID</th>
+            <th className="text-left p-2">Full Name</th>
+            <th className="text-left p-2">Security #</th>
+            <th className="text-left p-2">Grade</th>
+            <th className="text-left p-2">Email</th>
+          </tr>
+        </thead>
+        <tbody>
+          {roster.map((r)=> (
+            <tr key={r.personId} className="odd:bg-white even:bg-gray-50">
+              <td className="p-2">{r.personId}</td>
+              <td className="p-2">{r.fullName}</td>
+              <td className="p-2">{r.securityNumber}</td>
+              <td className="p-2">{r.grade}</td>
+              <td className="p-2">{r.email}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ------------------------------
+// Calibration & Capture Component
+// ------------------------------
+
+function CalibrateAndCapture({ grid, assignments, setAssignments, roster, mobilenetReady, mobilenetRef, gallery, setGallery }) {
+  const [imageSrc, setImageSrc] = useState(null);
+  const [corners, setCorners] = useState(Storage.load("corners", [])); // [{x,y}*4]
+  const [presence, setPresence] = useState([]); // boolean per cell
+  const [results, setResults] = useState(null);
+  const canvasRef = useRef(null);
+  const imgRef = useRef(null);
+
+  useEffect(()=>Storage.save("corners", corners), [corners]);
+
+  const onImage = (file) => {
+    const url = URL.createObjectURL(file);
+    setImageSrc(url);
+    setPresence([]);
+    setResults(null);
+  };
+
+  const resetCorners = () => setCorners([]);
+
+  const onClickCanvas = (e) => {
+    if (!imageSrc) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    if (corners.length < 4) setCorners([...corners, { x, y }]);
+  };
+
+  const slotKey = (r,c) => `${r}-${c}`;
+
+  const analyze = async () => {
+    if (!imageSrc || corners.length !== 4) { alert("Upload an image and click 4 corners (top-left, top-right, bottom-right, bottom-left)"); return; }
+    const img = imgRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+
+    // Draw the image to canvas at natural size
+    const W = img.naturalWidth; const H = img.naturalHeight;
+    canvas.width = W; canvas.height = H; ctx.drawImage(img, 0, 0, W, H);
+
+    // Perspective transform using OpenCV.js
+    // @ts-ignore
+    if (!window.cv) { alert("OpenCV not ready yet."); return; }
+    // @ts-ignore
+    const cv = window.cv;
+
+    const src = cv.imread(canvas);
+    const dst = new cv.Mat();
+    const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, new Float32Array(corners.flatMap(p=>[p.x * (W / canvas.width), p.y * (H / canvas.height)])));
+    const w = W; const h = H;
+    const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, new Float32Array([0,0, w,0, w,h, 0,h]));
+    const M = cv.getPerspectiveTransform(srcTri, dstTri);
+    cv.warpPerspective(src, dst, M, new cv.Size(w, h));
+
+    // For each grid cell, crop and detect presence via edge/area heuristic
+    const present = [];
+    const cellW = Math.floor(w / grid.cols);
+    const cellH = Math.floor(h / grid.rows);
+
+    const cellCan = document.createElement('canvas');
+    const cellCtx = cellCan.getContext('2d');
+
+    for (let r = 0; r < grid.rows; r++) {
+      for (let c = 0; c < grid.cols; c++) {
+        const x = c * cellW + Math.floor(cellW*0.08);
+        const y = r * cellH + Math.floor(cellH*0.08);
+        const cw = Math.floor(cellW*0.84);
+        const ch = Math.floor(cellH*0.84);
+
+        const roi = new cv.Rect(x, y, cw, ch);
+        const cell = dst.roi(roi);
+        // Basic detection: grayscale -> Canny -> count edges
+        const gray = new cv.Mat();
+        cv.cvtColor(cell, gray, cv.COLOR_RGBA2GRAY);
+        const blur = new cv.Mat();
+        cv.GaussianBlur(gray, blur, new cv.Size(3,3), 0, 0, cv.BORDER_DEFAULT);
+        const edges = new cv.Mat();
+        cv.Canny(blur, edges, 50, 150);
+        const nonZero = cv.countNonZero(edges);
+        const density = nonZero / (cw * ch);
+        // Heuristic: a phone (rectangular, dark glass) tends to produce higher edge density than an empty slot
+        const isPresent = density > 0.02; // tune as needed
+        present.push(isPresent);
+
+        // Cleanup
+        gray.delete(); blur.delete(); edges.delete(); cell.delete();
+      }
+    }
+
+    setPresence(present);
+
+    // Build results: missing and identity checks
+    const missing = [];
+    const mismatched = [];
+
+    // Optional identity check using MobileNet embeddings (per student gallery)
+    const tf = window.tf; // @ts-ignore
+    const model = mobilenetRef.current;
+
+    if (mobilenetReady && model) {
+      // Build per-slot embedding and compare to assigned student's gallery vector
+      let idx = 0;
+      for (let r = 0; r < grid.rows; r++) {
+        for (let c = 0; c < grid.cols; c++) {
+          const key = slotKey(r,c);
+          if (!present[idx]) {
+            // missing
+            const pid = assignments[key];
+            if (pid) missing.push(pid);
+          } else {
+            // identity check (if known assignment)
+            const pid = assignments[key];
+            if (pid && gallery[pid]) {
+              const x = c * cellW + Math.floor(cellW*0.08);
+              const y = r * cellH + Math.floor(cellH*0.08);
+              const cw = Math.floor(cellW*0.84);
+              const ch = Math.floor(cellH*0.84);
+              // Extract bitmap for tfjs
+              cellCan.width = cw; cellCan.height = ch;
+              cellCtx.drawImage(cv.imshow("__hidden__", dst), x, y, cw, ch, 0, 0, cw, ch);
+              const tensor = tf.browser.fromPixels(cellCan).toFloat().div(255).expandDims(0);
+              const embedding = await model.infer(tensor, { embedding: true }).data();
+              const sim = cosineSimilarity(Array.from(embedding), gallery[pid]);
+              if (sim < 0.75) { // threshold to tune
+                mismatched.push({ personId: pid, sim, slot: key });
+              }
+              tf.dispose(tensor);
+            }
+          }
+          idx++;
+        }
+      }
+    } else {
+      // If no model, just compute missing
+      let idx = 0;
+      for (let r = 0; r < grid.rows; r++) {
+        for (let c = 0; c < grid.cols; c++) {
+          const key = slotKey(r,c);
+          if (!present[idx] && assignments[key]) missing.push(assignments[key]);
+          idx++;
+        }
+      }
+    }
+
+    // Cleanup big mats
+    src.delete(); dst.delete(); M.delete(); srcTri.delete(); dstTri.delete();
+
+    setResults({ missing, mismatched });
+  };
+
+  const enrollSelected = async () => {
+    if (!imageSrc || !mobilenetReady) { alert("Load an image and wait for MobileNet to load"); return; }
+    const assignedCount = Object.keys(assignments).length;
+    if (assignedCount === 0) { alert("Assign students to slots first (below the canvas)"); return; }
+
+    const img = imgRef.current; const canvas = canvasRef.current; const W = img.naturalWidth; const H = img.naturalHeight;
+    const ctx = canvas.getContext('2d'); canvas.width = W; canvas.height = H; ctx.drawImage(img, 0, 0, W, H);
+
+    // @ts-ignore
+    const cv = window.cv; const src = cv.imread(canvas); const dst = new cv.Mat();
+    const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, new Float32Array(corners.flatMap(p=>[p.x, p.y])));
+    const w = W, h = H; const dstTri = cv.matFromArray(4,1,cv.CV_32FC2,new Float32Array([0,0,w,0,w,h,0,h]));
+    const M = cv.getPerspectiveTransform(srcTri, dstTri); cv.warpPerspective(src, dst, M, new cv.Size(w,h));
+
+    const tf = window.tf; const model = mobilenetRef.current;
+
+    const newGallery = { ...gallery };
+
+    const cellW = Math.floor(w / grid.cols);
+    const cellH = Math.floor(h / grid.rows);
+    const can = document.createElement('canvas'); const c2d = can.getContext('2d');
+
+    for (let r = 0; r < grid.rows; r++) {
+      for (let c = 0; c < grid.cols; c++) {
+        const key = `${r}-${c}`; const pid = assignments[key];
+        if (!pid) continue;
+        const x = c * cellW + Math.floor(cellW*0.08);
+        const y = r * cellH + Math.floor(cellH*0.08);
+        const cw = Math.floor(cellW*0.84); const ch = Math.floor(cellH*0.84);
+        can.width = cw; can.height = ch; c2d.drawImage(cv.imshow("__h2__", dst), x, y, cw, ch, 0, 0, cw, ch);
+        const tensor = tf.browser.fromPixels(can).toFloat().div(255).expandDims(0);
+        const emb = await model.infer(tensor, { embedding: true }).data();
+        newGallery[pid] = Array.from(emb);
+        tf.dispose(tensor);
+      }
+    }
+
+    src.delete(); dst.delete(); M.delete(); srcTri.delete(); dstTri.delete();
+
+    setGallery(newGallery);
+    alert("Enrollment complete: gallery vectors updated for assigned students present in the photo.");
+  };
+
+  const rosterById = Object.fromEntries(roster.map(r=>[r.personId, r]));
+  const slots = Array.from({ length: grid.rows * grid.cols }, (_,i)=> ({ r: Math.floor(i / grid.cols), c: i % grid.cols }));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <label className="px-3 py-2 rounded-2xl bg-white border cursor-pointer">
+          Upload Photo
+          <input type="file" accept="image/*" className="hidden" onChange={(e)=>{ const f=e.target.files?.[0]; if (f) onImage(f); }} />
+        </label>
+        <button className="px-3 py-2 rounded-2xl bg-white border" onClick={resetCorners}>Reset corners</button>
+        <button className="px-3 py-2 rounded-2xl bg-gray-900 text-white" onClick={analyze}>Analyze photo</button>
+        <button className="px-3 py-2 rounded-2xl bg-indigo-600 text-white" onClick={enrollSelected} disabled={!mobilenetReady}>Enroll from this photo</button>
+        <span className="text-xs text-gray-500">Click the four corners of the box (TL, TR, BR, BL) on the image to calibrate.</span>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="bg-gray-100 rounded-xl p-2">
+          {imageSrc ? (
+            <div className="relative">
+              <img src={imageSrc} alt="box" ref={imgRef} className="max-w-full rounded" onLoad={(e)=>{ /* noop */ }} />
+              {/* Overlay canvas for clicks */}
+              <div className="relative">
+                <canvas ref={canvasRef} onClick={onClickCanvas} className="mt-2 w-full border rounded" />
+              </div>
+              <CornerList corners={corners} />
+            </div>
+          ) : (
+            <div className="text-sm text-gray-500 p-8">Upload a photo of the phone box, then click 4 corners in order: top-left, top-right, bottom-right, bottom-left. The app will deskew and analyze each slot.</div>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          <AssignmentsPanel slots={slots} assignments={assignments} setAssignments={setAssignments} roster={roster} />
+          {presence.length > 0 && (
+            <PresenceSummary presence={presence} assignments={assignments} rosterById={rosterById} results={results} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CornerList({ corners }) {
+  if (corners.length === 0) return null;
+  return (
+    <div className="mt-2 text-xs text-gray-600">
+      <div className="font-semibold">Corners clicked:</div>
+      <ol className="list-decimal list-inside">
+        {corners.map((p,i)=> <li key={i}>({Math.round(p.x)}, {Math.round(p.y)})</li>)}
+      </ol>
+    </div>
+  );
+}
+
+function AssignmentsPanel({ slots, assignments, setAssignments, roster }) {
+  const [search, setSearch] = useState("");
+  const filtered = roster.filter(r => r.fullName.toLowerCase().includes(search.toLowerCase()) || r.securityNumber?.toLowerCase().includes(search.toLowerCase()) || r.personId.includes(search));
+
+  const assign = (slot, pid) => setAssignments({ ...assignments, [slot]: pid });
+
+  return (
+    <div className="bg-white border rounded-xl p-3">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-semibold">Assign students to slots</h3>
+        <input className="border rounded px-2 py-1 text-sm" placeholder="Search roster" value={search} onChange={(e)=>setSearch(e.target.value)} />
+      </div>
+      <div className="grid grid-cols-5 gap-2 mt-3">
+        {slots.map(({r,c})=>{
+          const key = `${r}-${c}`;
+          const pid = assignments[key];
+          const label = `R${r+1}C${c+1}`;
+          const name = pid ? (roster.find(x=>x.personId===pid)?.fullName || pid) : "Unassigned";
+          return (
+            <div key={key} className="border rounded-lg p-2 text-xs">
+              <div className="text-[10px] text-gray-500">{label}</div>
+              <div className="font-medium truncate" title={name}>{name}</div>
+              <select className="mt-1 w-full border rounded" value={pid || ""} onChange={(e)=>assign(key, e.target.value || undefined)}>
+                <option value="">— Assign —</option>
+                {filtered.map(s => <option key={s.personId} value={s.personId}>{s.fullName} ({s.securityNumber || s.grade})</option>)}
+              </select>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 text-xs text-gray-500">Tip: you can map slots to your "Security Number" (e.g., 9A1 → a specific slot) if your box layout follows that order.</div>
+    </div>
+  );
+}
+
+function PresenceSummary({ presence, assignments, rosterById, results }) {
+  const missingPIDs = results?.missing || [];
+  const mismatched = results?.mismatched || [];
+  const missing = missingPIDs.map(pid => rosterById[pid]?.fullName || pid);
+  return (
+    <div className="bg-white border rounded-xl p-3 text-sm space-y-3">
+      <h3 className="font-semibold">Analysis Results</h3>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <div className="text-gray-600 text-xs">Missing phones</div>
+          {missing.length ? (
+            <ul className="list-disc list-inside">
+              {missing.map((name,i) => <li key={i}>{name}</li>)}
+            </ul>
+          ) : <div className="text-green-700">None detected 🎉</div>}
+        </div>
+        <div>
+          <div className="text-gray-600 text-xs">Possible mismatches (low similarity)</div>
+          {mismatched.length ? (
+            <ul className="list-disc list-inside">
+              {mismatched.map((m,i)=>{
+                const name = rosterById[m.personId]?.fullName || m.personId;
+                return <li key={i}>{name} — sim {m.sim.toFixed(2)} at slot {m.slot}</li>;
+              })}
+            </ul>
+          ) : <div className="text-gray-700">No mismatches flagged</div>}
+        </div>
+      </div>
+      <div className="text-xs text-gray-500">Note: results depend on calibration quality and lighting. You can tune thresholds in the code (edge density and similarity).</div>
+    </div>
+  );
+}
+
+function Footnote() {
+  return (
+    <div className="text-xs text-gray-500">
+      <p className="mb-2 font-semibold">How it works (quick):</p>
+      <ul className="list-disc list-inside space-y-1">
+        <li>Upload roster CSV, set grid size (e.g., 6×10).</li>
+        <li>Upload a photo, click the four corners of the box to deskew.</li>
+        <li>Assign students to slots. Click <span className="font-semibold">Analyze</span> to find empty slots.</li>
+        <li>Click <span className="font-semibold">Enroll from this photo</span> once to learn each student’s phone appearance. Future analyses will flag mismatches.</li>
+        <li>All data stays in your browser. Use Export/Import JSON to back up or move between devices.</li>
+      </ul>
+      <p className="mt-2">Privacy: photos and embeddings remain local unless you export them. If you host this on GitHub Pages, consider adding a short privacy note for students/parents.</p>
+    </div>
+  );
+}
