@@ -29,7 +29,7 @@
   // ===== React helpers =====
   const { useEffect, useRef, useState, useMemo } = React;
 
-  const DEFAULT_GRID = { rows: 6, cols: 10 }; // 60 slots
+  const DEFAULT_GRID = { rows: 12, cols: 5 }; // 60 slots (12x5)
   const STORAGE_KEYS = { roster: 'roster', grid: 'grid', assignments: 'assignments', gallery: 'gallery', corners: 'corners', box: 'currentBox' };
   const slotKey = (r,c)=> `${r}-${c}`;
 
@@ -52,7 +52,7 @@
       React.createElement('div',{className:'flex items-start justify-between gap-4'},[
         React.createElement('div',{key:1},[
           React.createElement('h1',{className:'text-2xl sm:text-3xl font-bold'},'Phone Box Checker (Mobile MVP)'),
-          React.createElement('p',{className:'text-xs sm:text-sm text-gray-600'},'Use your phone to scan a box (6×10). Pick a box (9A–12F, SM1, SM2), auto‑assign from Security #, detect missing and flag possible fakes after enrollment.')
+          React.createElement('p',{className:'text-xs sm:text-sm text-gray-600'},'Use your phone to scan a box (12×5). Pick a box (9A–12F, SM1, SM2), auto‑assign from Security #, detect missing and flag possible fakes after enrollment.')
         ])
       ])
     );
@@ -233,126 +233,4 @@
           const key = slotKey(r,c); const pid = assignments[key];
           if(!present[idx]){ if(pid) missing.push(pid); idx++; continue; }
           if(pid && gallery[pid]){
-            const x=c*cellW+Math.floor(cellW*0.08); const y=r*cellH+Math.floor(cellH*0.08); const cw=Math.floor(cellW*0.84), ch=Math.floor(cellH*0.84);
-            tmpCanvas.width=cw; tmpCanvas.height=ch; tctx.drawImage(cv.imshow('__tmp__',dst),x,y,cw,ch,0,0,cw,ch);
-            const tensor=tf.browser.fromPixels(tmpCanvas).toFloat().div(255).expandDims(0);
-            const emb = await model.infer(tensor,{embedding:true}).data();
-            const sim = cosineSimilarity(Array.from(emb), gallery[pid]); if(sim<0.75) mismatched.push({personId: pid, sim, slot:key}); tf.dispose(tensor);
-          }
-          idx++;
-        }
-      }else{
-        let idx=0; for(let r=0;r<grid.rows;r++) for(let c=0;c<grid.cols;c++){ const key=slotKey(r,c); if(!present[idx] && assignments[key]) missing.push(assignments[key]); idx++; }
-      }
-
-      src.delete(); dst.delete(); M.delete(); srcTri.delete(); dstTri.delete();
-      setResults({missing, mismatched});
-    };
-
-    const enrollFromPhoto = async ()=>{
-      if(!imageURL || corners.length!==4 || !mobilenetReady){ alert('Need photo + corners + model loaded'); return; }
-      const img = imgRef.current; const canvas = canvasRef.current; const W=img.naturalWidth, H=img.naturalHeight; const ctx=canvas.getContext('2d'); canvas.width=W; canvas.height=H; ctx.drawImage(img,0,0,W,H);
-      const cv=window.cv; const src=cv.imread(canvas); const dst=new cv.Mat(); const srcTri=cv.matFromArray(4,1,cv.CV_32FC2,new Float32Array(corners.flatMap(p=>[p.x,p.y]))); const dstTri=cv.matFromArray(4,1,cv.CV_32FC2,new Float32Array([0,0,W,0,W,H,0,H])); const M=cv.getPerspectiveTransform(srcTri,dstTri); cv.warpPerspective(src,dst,M,new cv.Size(W,H));
-      const tf=window.tf; const model=mobilenetRef.current; const cellW=Math.floor(W/grid.cols), cellH=Math.floor(H/grid.rows); const can=document.createElement('canvas'); const c2d=can.getContext('2d'); const newGallery={...gallery};
-      for(let r=0;r<grid.rows;r++) for(let c=0;c<grid.cols;c++){ const key=slotKey(r,c); const pid=assignments[key]; if(!pid) continue; const x=c*cellW+Math.floor(cellW*0.08); const y=r*cellH+Math.floor(cellH*0.08); const cw=Math.floor(cellW*0.84), ch=Math.floor(cellH*0.84); can.width=cw; can.height=ch; c2d.drawImage(cv.imshow('__en__',dst),x,y,cw,ch,0,0,cw,ch); const t=tf.browser.fromPixels(can).toFloat().div(255).expandDims(0); const emb=await model.infer(t,{embedding:true}).data(); newGallery[pid]=Array.from(emb); tf.dispose(t); }
-      src.delete(); dst.delete(); M.delete(); srcTri.delete(); dstTri.delete(); setGallery(newGallery); alert('Enrollment complete: gallery updated.');
-    };
-
-    const boxes = uniqueBoxesFromRoster(roster);
-    const rosterById = useMemo(()=> Object.fromEntries(roster.map(r=>[String(r.personId), r])), [roster]);
-
-    return React.createElement('div',{className:'max-w-6xl mx-auto space-y-5'},[
-      React.createElement(Header,{}),
-
-      React.createElement('div',{className:'card'},[
-        React.createElement('h2',{className:'text-lg font-semibold mb-3'},'1) Roster (auto‑loads from roster.csv)'),
-        React.createElement('div',{className:'flex flex-wrap items-center gap-2 text-sm'},[
-          React.createElement('label',{className:'btn'},['Upload CSV', React.createElement('input',{type:'file',accept:'.csv',className:'hidden',onChange:e=>{ const f=e.target.files?.[0]; if(f) onUploadCSV(f); }})]),
-          React.createElement('a',{href:'roster.csv',className:'btn',download:true},'Download current roster.csv'),
-          React.createElement('span',{className:'text-xs text-gray-500'},'Place roster.csv at the repo root (private repo recommended).')
-        ]),
-        roster.length? React.createElement(RosterTable,{roster}): React.createElement('div',{className:'text-sm text-gray-500 mt-3'},'No roster loaded yet. Put a roster.csv in the repo root or upload a CSV.')
-      ]),
-
-      React.createElement('div',{className:'card'},[
-        React.createElement('h2',{className:'text-lg font-semibold mb-3'},'2) Pick box & grid'),
-        React.createElement('div',{className:'flex items-center gap-3 flex-wrap'},[
-          React.createElement('label',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'text-sm'},'Box'),
-            React.createElement('select',{className:'border rounded px-2 py-1', value: currentBox, onChange:e=> setCurrentBox(e.target.value)}, [
-              React.createElement('option',{key:'none',value:''},'— Select —'),
-              ...boxes.map(b=> React.createElement('option',{key:b, value:b}, b))
-            ])
-          ]),
-          React.createElement(NumberInput,{label:'Rows', value:grid.rows, onChange:v=>setGrid({...grid, rows:v}), min:1, max:12}),
-          React.createElement(NumberInput,{label:'Cols', value:grid.cols, onChange:v=>setGrid({...grid, cols:v}), min:1, max:12}),
-          React.createElement('div',{className:'text-xs text-gray-500'},`Total slots: ${grid.rows*grid.cols}`)
-        ])
-      ]),
-
-      React.createElement('div',{className:'card'},[
-        React.createElement('h2',{className:'text-lg font-semibold mb-3'},'3) Take picture (mobile‑friendly) & analyze'),
-        React.createElement('div',{className:'flex flex-wrap items-center gap-2 text-sm'},[
-          React.createElement('label',{className:'btn'},[
-            'Take/Upload Photo',
-            React.createElement('input',{type:'file',accept:'image/*',capture:'environment',className:'hidden',onChange:e=>{ const f=e.target.files?.[0]; if(f) onPhoto(f); }})
-          ]),
-          React.createElement('button',{className:'btn',onClick:()=>setCorners([])},'Reset corners'),
-          React.createElement('button',{className:'btn btn-primary',onClick:analyze},'Analyze photo'),
-          React.createElement('button',{className:'btn btn-primary',onClick:enrollFromPhoto, disabled:!mobilenetReady},'Enroll from this photo'),
-          React.createElement('span',{className:'text-xs text-gray-500'},'Tap 4 corners (TL, TR, BR, BL).')
-        ]),
-        React.createElement('div',{className:'grid md:grid-cols-2 gap-4 mt-3'},[
-          React.createElement('div',{className:'bg-gray-100 rounded-xl p-2'},[
-            imageURL ? (
-              React.createElement('div',{className:'relative'},[
-                React.createElement('img',{src:imageURL, alt:'box', ref:imgRef, className:'w-full h-auto rounded'}),
-                React.createElement('canvas',{ref:canvasRef, onClick:onClickCanvas, className:'mt-2 w-full border rounded'})
-              ])
-            ) : React.createElement('div',{className:'text-sm text-gray-500 p-8'},'Take a photo and tap the 4 corners to deskew. Then Analyze.')
-          ]),
-          React.createElement('div',{className:'space-y-4'},[
-            React.createElement(AssignmentsPanel,{rows:grid.rows, cols:grid.cols, assignments, setAssignments, roster, currentBox}),
-            presence.length>0 && React.createElement('div',{className:'bg-white border rounded-xl p-3 text-sm space-y-3'},[
-              React.createElement('h3',{className:'font-semibold'},'Analysis Results'),
-              (results && results.missing && results.missing.length) ? (
-                React.createElement('div',{},[
-                  React.createElement('div',{className:'text-gray-600 text-xs'},'Missing phones'),
-                  React.createElement('ul',{className:'list-disc list-inside'}, results.missing.map((pid,i)=> React.createElement('li',{key:i}, (rosterById[pid]?.fullName)||pid)))
-                ])
-              ) : React.createElement('div',{className:'text-green-700'},'No missing phones detected'),
-              (results && results.mismatched && results.mismatched.length) ? (
-                React.createElement('div',{},[
-                  React.createElement('div',{className:'text-gray-600 text-xs'},'Possible mismatches'),
-                  React.createElement('ul',{className:'list-disc list-inside'}, results.mismatched.map((m,i)=> React.createElement('li',{key:i}, `${(rosterById[m.personId]?.fullName)||m.personId} — sim ${m.sim.toFixed(2)} at slot ${m.slot}`)))
-                ])
-              ) : React.createElement('div',{className:'text-gray-700'},'No mismatches flagged')
-            ])
-          ])
-        ])
-      ]),
-
-      React.createElement('div',{className:'card text-xs text-gray-500 space-y-2'},[
-        React.createElement('div',{className:'font-semibold'},'Data export/import'),
-        React.createElement('div',{className:'flex flex-wrap items-center gap-2 text-sm'},[
-          React.createElement('button',{className:'btn btn-primary',onClick:()=>downloadJson('phone-box-data.json',{grid, roster, assignments, gallery, corners, currentBox})},'Export JSON'),
-          (()=>{ const label = React.createElement('label',{className:'btn'},['Import JSON', React.createElement('input',{type:'file',accept:'application/json',className:'hidden',onChange:e=>{ const f=e.target.files?.[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ const obj=JSON.parse(String(r.result)); setRoster(obj.roster||[]); setGrid(obj.grid||DEFAULT_GRID); setAssignments(obj.assignments||{}); setGallery(obj.gallery||{}); setCorners(obj.corners||[]); setCurrentBox(obj.currentBox||''); }catch{ alert('Invalid JSON'); } }; r.readAsText(f); }}) ]); return label; })(),
-          React.createElement('div',{},'All data stays in your browser unless you export it.')
-        ])
-      ])
-    ]);
-  }
-
-  ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
-  </script>
-
-  <!--
-  README (short):
-  - Place roster.csv at repo root. Headers: Person ID,Full Name,Security Number,Current Grade,Email 1
-  - Security Number parsing supports: 9B11, 10F7, 12C42, SM112, SM1-12, SM1 12 (prefix = box, trailing digits = slot 1–60)
-  - On mobile, the file input uses capture="environment" to open the rear camera.
-  - Use the Box dropdown (auto-built from roster) and the "Auto‑assign from Security #" button to map slots instantly.
-  - Keep your repo private to protect student data.
-  -->
-</body>
-</html>
+            const x=c*cellW+Math.floor
