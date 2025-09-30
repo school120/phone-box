@@ -11,17 +11,35 @@
 </head>
 <body>
   <h1>Phone Box Checker</h1>
+
+  <label for="boxSelect">Select Box:</label>
+  <select id="boxSelect">
+    <option value="9A">Grade 9 - Box A</option>
+    <option value="9B">Grade 9 - Box B</option>
+    <option value="9C">Grade 9 - Box C</option>
+    <option value="9D">Grade 9 - Box D</option>
+    <option value="9E">Grade 9 - Box E</option>
+    <option value="9F">Grade 9 - Box F</option>
+    <option value="SM1">Senior Mincha 1</option>
+    <option value="SM2">Senior Mincha 2</option>
+  </select><br><br>
+
   <input type="file" accept="image/*" id="imageInput"><br><br>
   <canvas id="canvas"></canvas>
   <div id="missingList"></div>
   <button onclick="emailMissing()">Email Missing Students</button>
 
-  <script>
-    const CSV_URL = 'https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/data/roaster.csv';
+  <!-- OpenCV.js -->
+  <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();" type="textthubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/data/roaster.csv';
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     let studentData = [];
     let missingSlots = [];
+    let selectedBox = '9A';
+
+    document.getElementById('boxSelect').addEventListener('change', e => {
+      selectedBox = e.target.value;
+    });
 
     document.getElementById('imageInput').addEventListener('change', handleImageUpload);
 
@@ -33,6 +51,11 @@
         const [id, name, slot, grade, email] = line.split(',');
         return { id, name, slot: slot.replace(/"/g, ''), grade, email };
       });
+    }
+
+    function onOpenCvReady() {
+      console.log('OpenCV.js is ready');
+      loadCSV();
     }
 
     function handleImageUpload(event) {
@@ -47,11 +70,56 @@
       img.src = URL.createObjectURL(file);
     }
 
-    function detectEmptySlots(img) {
-      // Placeholder logic: simulate missing slots
-      // Replace with real image detection using TensorFlow.js or opencv.js
-      missingSlots = ['9A1', '9A3']; // Example missing slots
+    function detectEmptySlots(imgElement) {
+      let src = cv.imread(imgElement);
+      let gray = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+      cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+      let thresh = new cv.Mat();
+      cv.threshold(gray, thresh, 150, 255, cv.THRESH_BINARY_INV);
+
+      let contours = new cv.MatVector();
+      let hierarchy = new cv.Mat();
+      cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+      let slots = [];
+      for (let i = 0; i < contours.size(); i++) {
+        let cnt = contours.get(i);
+        let rect = cv.boundingRect(cnt);
+        if (rect.width > 30 && rect.height > 30) {
+          slots.push(rect);
+        }
+      }
+
+      // Sort slots top-to-bottom, left-to-right
+      slots.sort((a, b) => a.y - b.y || a.x - b.x);
+
+      missingSlots = [];
+      slots.forEach((rect, index) => {
+        let roi = gray.roi(rect);
+        let mean = cv.mean(roi)[0];
+        if (mean > 100) {
+          let slotLabel = getSlotLabel(index);
+          missingSlots.push(slotLabel);
+        }
+        roi.delete();
+      });
+
+      src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
       showMissingStudents();
+    }
+
+    function getSlotLabel(index) {
+      const rows = 6, cols = 12;
+      const row = Math.floor(index / cols);
+      const col = index % cols;
+
+      if (selectedBox.startsWith('9')) {
+        return `${selectedBox}${col + 1}`; // e.g., 9F3
+      } else if (selectedBox.startsWith('SM')) {
+        return `${selectedBox}-${index + 1}`; // e.g., SM1-5
+      }
+      return `Unknown-${index}`;
     }
 
     function showMissingStudents() {
@@ -71,8 +139,5 @@
       const body = encodeURIComponent('Please come pick up your phone from the office.');
       window.location.href = `mailto:${emails}?subject=${subject}&body=${body}`;
     }
-
-    loadCSV();
   </script>
 </body>
-</html>
