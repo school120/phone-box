@@ -1,19 +1,14 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Phone Box Attendance — Pro Editor (Rows • Edges • Slots)</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-<script defer src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.3/dist/tesseract.min.js"></script>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>Phone Box Attendance — Manual Pro Editor (No Dependencies)</title>
 <style>
-  :root { --bg:#0b1020; --card:#121833; --muted:#8ea0d0; --accent:#31ccff; }
+  :root{--bg:#0b1020;--card:#121833;--muted:#8ea0d0;--accent:#31ccff}
   *{box-sizing:border-box}
   html,body{height:100%}
-  body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;background:var(--bg);color:#fff}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Ubuntu;background:var(--bg);color:#fff}
   header{padding:14px 16px;border-bottom:1px solid #ffffff1a;display:flex;gap:12px;align-items:center}
   .badge{background:#ffffff14;border:1px solid #ffffff1a;padding:4px 8px;border-radius:999px;font-size:12px}
   main{max-width:1200px;margin:0 auto;padding:12px}
@@ -45,44 +40,40 @@
 <body>
 <header>
   <div style="font-weight:800">📱 Phone Box Attendance</div>
-  <div class="badge">Pro Editor: Rows • Edges • Slots • Zoom/Pan • Save per box</div>
+  <div class="badge">Manual Pro Editor • Rows • Edges • 12 slots • Save per box</div>
 </header>
 
 <main>
   <div class="wrap">
     <section class="card">
       <h2>Scan a Box</h2>
+
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div>
           <label>Choose box</label>
-          <select id="box"><option value="">(no box)</option></select>
+          <select id="box"></select>
         </div>
         <div>
-          <label>Roster CSV</label>
-          <select id="rosterChoice">
-            <option value="./data/roster.csv">Use repo roster (./data/roster.csv)</option>
-            <option value="upload">Upload CSV…</option>
-          </select>
-          <input id="rosterUpload" type="file" accept=".csv" style="display:none;margin-top:6px" />
+          <label>Roster CSV (optional)</label>
+          <input id="roster" type="file" accept=".csv"/>
         </div>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
         <div>
           <label>Take/Upload a photo</label>
-          <input id="photo" type="file" accept="image/*" capture="environment" />
+          <input id="photo" type="file" accept="image/*" capture="environment"/>
         </div>
         <div>
-          <label>Auto helpers</label>
+          <label>Helpers</label>
           <div class="toolbar">
-            <button id="autoRows" class="primary">Find rows</button>
-            <button id="ocrSlots">From OCR (numbers)</button>
-            <button id="equalRow">Equal 12 on row</button>
+            <button id="equalRow">Equal 12 (current row)</button>
+            <button id="copyRow">Copy current row → all</button>
             <label style="display:flex;align-items:center;gap:8px;margin-left:auto">
               <input id="useSaved" type="checkbox" style="width:auto"> Use saved layout
             </label>
           </div>
-          <small>Cyan lines = row tops. Yellow = per-row left/right. White = 13 boundaries (12 slots). “From OCR” reads the printed numbers to seed boundaries.</small>
+          <small>Cyan = 5 row tops (sit on blue strips). Yellow = row left/right. White = 13 vertical boundaries per row (slots).</small>
         </div>
       </div>
 
@@ -98,7 +89,7 @@
           <button data-mode="slots">Slots</button>
         </div>
 
-        <div class="seg" id="rowPicker"></div>
+        <div class="seg" id="rowSeg"></div>
 
         <div class="seg">
           <button id="nudgeM5">◀︎◀︎</button>
@@ -146,68 +137,78 @@
 </main>
 
 <script>
-/* --------------------- Setup --------------------- */
+/* ---------- Boxes ---------- */
 const boxSel=document.getElementById('box');
+(function fillBoxes(){
+  const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
+  grades.forEach(g=>letters.forEach(l=>ids.push(g+l)));
+  ids.push('SM1','SM2');
+  boxSel.innerHTML = ids.map(x=>`<option>${x}</option>`).join('');
+})();
+
+/* ---------- State ---------- */
+let roster=[], currentImg=null, W=0, H=0;
+let guides=null; // {rows:[y], LR:[[L,R]×5], bounds:[[13]×5]}
+let rois=[];     // 60 rects {x,y,w,h,row,col}
+let mode='rows', selRow=0;
+let view={z:1,x:0,y:0}; // zoom/pan
+
+/* ---------- DOM ---------- */
 const stage=document.getElementById('stage'), img=document.getElementById('img');
 const overlay=document.getElementById('overlay'), ctx=overlay.getContext('2d');
-const resultsBody=document.getElementById('results'), statusEl=document.getElementById('status');
-const rosterChoice=document.getElementById('rosterChoice'), rosterUpload=document.getElementById('rosterUpload');
-const photo=document.getElementById('photo'), opacityEl=document.getElementById('opacity');
-const modeSeg=document.getElementById('modeSeg'), rowPicker=document.getElementById('rowPicker');
-const useSaved=document.getElementById('useSaved');
+const statusEl=document.getElementById('status'), resultsBody=document.getElementById('results');
+const opacityEl=document.getElementById('opacity'), useSaved=document.getElementById('useSaved');
 
-const hueMin=190, hueMax=255, sMin=0.35, vMin=0.25, edgePct=0.04;
-
-const BOX_IDS=[]; ['9','10','11','12'].forEach(g=>['A','B','C','D','E','F'].forEach(l=>BOX_IDS.push(`${g}${l}`)));
-boxSel.innerHTML += BOX_IDS.map(x=>`<option>${x}</option>`).join('');
-
-let roster=[], mode='rows', selRow=0, worker=null;
-let currentImg=null, W=0, H=0, view={z:1, x:0, y:0}; // zoom/pan
-let guides=null; // {rows:[y], LR:[[L,R]×5], bounds:[[13]×5]}
-let rois=[];
-
-/* --------------------- Roster --------------------- */
-rosterChoice.addEventListener('change',()=>{ rosterUpload.style.display = rosterChoice.value==='upload'?'block':'none'; });
-function loadRoster(){
-  return new Promise((resolve)=>{
-    if(rosterChoice.value==='upload'){
-      if(!rosterUpload.files[0]) return resolve([]);
-      Papa.parse(rosterUpload.files[0], {header:true, complete:r=>resolve(r.data)});
-    } else Papa.parse('./data/roster.csv',{download:true,header:true,complete:r=>resolve(r.data)});
-  });
-}
-function byBox(id){const m={}; for(const r of roster){const s=(r['Security Number']||'').toUpperCase().replace(/\s+/g,'');const m2=s.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/); if(m2&&m2[1]===id)m[+m2[2]]=r['Full Name'];} return m;}
-function drawGrid(names={}){const boxGrid=document.getElementById('boxGrid'); boxGrid.innerHTML=''; for(let i=1;i<=60;i++){const d=document.createElement('div'); d.className='slot'; const s=document.createElement('span'); s.textContent=names[i]||`#${i}`; d.appendChild(s); boxGrid.appendChild(d);} }
-
-/* --------------------- Image load & canvas --------------------- */
-photo.addEventListener('change',()=>{
-  const f=photo.files[0]; if(!f) return;
-  const url=URL.createObjectURL(f); const im=new Image();
-  im.onload=()=>{ currentImg=im; img.src=url; img.style.display='block'; fitCanvas(); resetGuides(); draw(); };
-  im.src=url;
-});
-window.addEventListener('resize', fitCanvas);
+/* ---------- Utils ---------- */
+const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
 function fitCanvas(){
   if(!currentImg) return;
-  const r=stage.getBoundingClientRect(); overlay.width=r.width; overlay.height=r.height;
-  // natural size basis
+  const r=stage.getBoundingClientRect();
+  overlay.width=r.width; overlay.height=r.height;
   W=currentImg.naturalWidth; H=currentImg.naturalHeight;
   img.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.z})`;
   draw();
 }
+window.addEventListener('resize', fitCanvas);
+function status(t){statusEl.textContent=t||''}
 
-/* --------------------- Guides model --------------------- */
+/* ---------- Roster (tiny CSV parser) ---------- */
+document.getElementById('roster').addEventListener('change', e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    const lines=r.result.split(/\r?\n/).filter(Boolean);
+    const header=lines.shift().split(',').map(s=>s.trim());
+    roster=lines.map(line=>{
+      const cols=line.split(',').map(s=>s.trim());
+      const rec={}; header.forEach((h,i)=>rec[h]=cols[i]||''); return rec;
+    });
+    status('Roster loaded.');
+  };
+  r.readAsText(f);
+});
+function boxFromSec(s){ if(!s) return null; s=String(s).toUpperCase().replace(/\s+/g,''); const m=s.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/); return m?{box:m[1],slot:parseInt(m[2],10)}:null; }
+function namesForBox(id){
+  const out={}; for(const row of roster){ const m=boxFromSec(row['Security Number']||row.SecurityNumber); if(m&&m.box===id) out[m.slot]=row['Full Name']||row.FullName||''; }
+  return out;
+}
+function drawGrid(names={}){
+  const grid=document.getElementById('boxGrid'); grid.innerHTML='';
+  for(let i=1;i<=60;i++){ const d=document.createElement('div'); d.className='slot'; const s=document.createElement('span'); s.textContent=names[i]||`#${i}`; d.appendChild(s); grid.appendChild(d); }
+}
+
+/* ---------- Default guides ---------- */
 function resetGuides(){
-  // evenly spaced estimate
   guides={
     rows:[0.20,0.38,0.56,0.74,0.92].map(v=>Math.round(v*H)),
-    LR:[[0.06*W,0.94*W],[0.06*W,0.94*W],[0.06*W,0.94*W],[0.06*W,0.94*W],[0.06*W,0.94*W]],
-    bounds:Array.from({length:5},()=>equalBoundsPx(0.06*W,0.94*W,12))
+    LR:Array.from({length:5},()=>[Math.round(0.06*W),Math.round(0.94*W)]),
+    bounds:Array.from({length:5},()=>equalBounds( Math.round(0.06*W), Math.round(0.94*W), 12 ))
   };
   computeROIs();
-  buildRowPicker();
+  buildRowSeg();
+  draw();
 }
-function equalBoundsPx(L,R,n){const s=(R-L)/n, b=[Math.round(L)]; for(let i=1;i<n;i++) b.push(Math.round(L+i*s)); b.push(Math.round(R)); return b;}
+function equalBounds(L,R,n){const s=(R-L)/n, b=[Math.round(L)]; for(let i=1;i<n;i++) b.push(Math.round(L+i*s)); b.push(Math.round(R)); return b;}
 function computeROIs(){
   rois=[];
   const gaps=[]; for(let i=1;i<guides.rows.length;i++) gaps.push(guides.rows[i]-guides.rows[i-1]);
@@ -222,263 +223,229 @@ function computeROIs(){
   }
 }
 
-/* --------------------- Auto helpers --------------------- */
-document.getElementById('autoRows').onclick=async()=>{
-  if(!currentImg) return alert('Add a photo first.');
-  const ds=downscale(currentImg, 1400);
-  const tops=findBlueBars(ds,{hueMin,hueMax,sMin,vMin,edge:edgePct});
-  if(tops.length===5) guides.rows=tops.map(y=>Math.round(y*(H/ds.height)));
-  else return status('Could not find 5 blue bars. Try a straighter photo.');
-  // L/R by blueness near each row
-  const small=downscale(currentImg, 1200), ctxS=small.getContext('2d'), im=ctxS.getImageData(0,0,small.width,small.height);
-  const scaleX=W/small.width, scaleY=H/small.height;
-  const bandH=Math.round((avgGap(guides.rows)*0.22)*small.height/H);
-  guides.LR = guides.rows.map(yBig=>{
-    const ySm=Math.round(yBig/scaleY);
-    const col = blueByColumn(im, ySm+1, Math.min(small.height-1,ySm+bandH));
-    const [L,R] = blueRun(col, Math.round(small.width*edgePct));
-    return [Math.round(L*scaleX), Math.round(R*scaleX)];
-  });
-  // set equal bounds initially
-  guides.bounds = guides.LR.map(([L,R])=>equalBoundsPx(L,R,12));
-  computeROIs(); draw(); status('Rows + edges detected.');
-};
+/* ---------- Photo ---------- */
+document.getElementById('photo').addEventListener('change', e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const url=URL.createObjectURL(f); const im=new Image();
+  im.onload=()=>{ currentImg=im; img.src=url; img.style.display='block'; view={z:1,x:0,y:0}; fitCanvas(); if(useSaved.checked) loadLayout(); else resetGuides(); status('Photo loaded. Align rows/edges/slots, then Save.'); };
+  im.src=url;
+});
 
-document.getElementById('ocrSlots').onclick=async()=>{
-  if(!currentImg) return alert('Add a photo first.');
-  if(!worker) worker = await Tesseract.createWorker('eng',1,{corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.3/tesseract-core.wasm.js',workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@5.0.3/dist/worker.min.js'});
-  // for each row: crop band and OCR digits to place 13 bounds
-  const small=downscale(currentImg, 1200), scaleX=W/small.width, scaleY=H/small.height;
-  const ctxS=small.getContext('2d');
-  const g=guides.rows; const bandH=Math.round((avgGap(g)*0.30)*small.height/H);
-  for(let r=0;r<5;r++){
-    const ySm=Math.round(g[r]/scaleY), y0=Math.max(0,ySm-4), y1=Math.min(small.height-1,ySm+bandH);
-    const crop=docrop(small,0,y0,small.width,y1-y0+1);
-    const data=(await worker.recognize(crop,{tessedit_char_whitelist:'0123456789',tessedit_pageseg_mode:'7'})).data;
-    let nums=data.words.map(w=>({t:w.text.replace(/\D/g,''), L:w.bbox.x0, R:w.bbox.x1, x:(w.bbox.x0+w.bbox.x1)/2}))
-                      .filter(o=>o.t.length>0).sort((a,b)=>a.x-b.x);
-    nums=dedupe(nums,10);
-    let bounds;
-    if(nums.length>=8){
-      bounds=boundsFromCenters(nums.map(o=>o.x), 12, 0, small.width-1);
-    } else {
-      // fallback to equal between L/R (make sure L/R exist)
-      if(!guides.LR[r]) guides.LR[r]=[Math.round(0.06*W),Math.round(0.94*W)];
-      const [Lr,Rr]=guides.LR[r].map(v=>Math.round(v/scaleX));
-      bounds=equalBoundsPx(Lr,Rr,12).map(x=>x); // small scale
-    }
-    guides.bounds[r]=bounds.map(x=>Math.round(x*scaleX));
-    // set L/R from bounds extremes
-    guides.LR[r]=[guides.bounds[r][0], guides.bounds[r][guides.bounds[r].length-1]];
+/* ---------- Mode/Row/Nudge ---------- */
+const modeSeg=document.getElementById('modeSeg');
+modeSeg.addEventListener('click', e=>{
+  if(e.target.tagName!=='BUTTON') return;
+  [...modeSeg.children].forEach(b=>b.classList.remove('active'));
+  e.target.classList.add('active');
+  mode=e.target.dataset.mode;
+  draw();
+});
+function buildRowSeg(){
+  const seg=document.getElementById('rowSeg'); seg.innerHTML='';
+  for(let i=0;i<5;i++){ const b=document.createElement('button'); b.textContent=(i+1); if(i===selRow) b.classList.add('active'); b.onclick=()=>{ selRow=i; buildRowSeg(); draw(); }; seg.appendChild(b); }
+}
+['nudgeM5','nudgeM1','nudgeP1','nudgeP5'].forEach(id=>document.getElementById(id).onclick=()=>nudge(id));
+function nudge(id){
+  const d=id==='nudgeM5'?-5:id==='nudgeM1'?-1:id==='nudgeP1'?1:5;
+  if(mode==='rows'){
+    guides.rows[selRow]=clamp(guides.rows[selRow]+d, 0, H-2);
+  }else if(mode==='edges'){
+    let [L,R]=guides.LR[selRow]; L=clamp(L+d,0,W-20); R=clamp(R+d,20,W); guides.LR[selRow]=[L,R];
+    const fr=guides.bounds[selRow].map(x=> (x-groupsL(selRow))/(groupsR(selRow)-groupsL(selRow)));
+    guides.bounds[selRow]=fr.map(f=>Math.round(L+f*(R-L)));
+  }else{
+    const b=guides.bounds[selRow]; let idx=nearestIdx(b, imgX(overlay.width/2));
+    b[idx]=clamp(b[idx]+d, idx?b[idx-1]+2:0, idx<b.length-1?b[idx+1]-2:W);
   }
-  computeROIs(); draw(); status('Slots seeded from OCR numbers. Fine-tune in “Slots” mode.');
-};
-
-document.getElementById('equalRow').onclick=()=>{
-  if(!currentImg||!guides) return;
-  const [L,R]=guides.LR[selRow]||[Math.round(0.06*W),Math.round(0.94*W)];
-  guides.bounds[selRow]=equalBoundsPx(L,R,12);
   computeROIs(); draw();
-};
+}
+function nearestIdx(arr,x){let bi=0,b=1e9; arr.forEach((v,i)=>{const d=Math.abs(v-x); if(d<b){b=d;bi=i;}}); return bi;}
+function groupsL(r){return guides.LR[r][0]} function groupsR(r){return guides.LR[r][1]}
 
-/* --------------------- Save / Load layouts --------------------- */
-document.getElementById('saveLayout').onclick=()=>{
-  if(!boxSel.value||!guides) return alert('Choose a box and calibrate.');
-  // save as fractions per row relative to L/R
-  const pack={ fracs: guides.bounds.map((b,r)=>{ const [L,R]=guides.LR[r]; return b.map(x=> (x-L)/Math.max(1,(R-L))); }),
-               rows: guides.rows.map(y=>y/H) };
+/* ---------- Helpers buttons ---------- */
+document.getElementById('equalRow').onclick=()=>{ const [L,R]=guides.LR[selRow]; guides.bounds[selRow]=equalBounds(L,R,12); computeROIs(); draw(); };
+document.getElementById('copyRow').onclick=()=>{ const from=selRow; for(let r=0;r<5;r++){ if(r===from) continue; guides.LR[r]=[...guides.LR[from]]; guides.bounds[r]=[...guides.bounds[from]]; } computeROIs(); draw(); };
+
+/* ---------- Save/Load/Export/Import layouts ---------- */
+document.getElementById('saveLayout').onclick=saveLayout;
+document.getElementById('loadLayout').onclick=loadLayout;
+document.getElementById('exportLayouts').onclick=exportLayouts;
+document.getElementById('importLayouts').addEventListener('change',importLayouts);
+useSaved.addEventListener('change',()=>{ if(useSaved.checked) loadLayout(); });
+
+function saveLayout(){
+  if(!boxSel.value||!guides) return alert('Choose a box and load a photo first.');
+  const pack={
+    rows: guides.rows.map(y=>y/H),
+    LR: guides.LR.map(([L,R])=>[L/W,R/W]),
+    bounds: guides.bounds.map((b,r)=>{const [L,R]=guides.LR[r]; return b.map(x=>(x-L)/Math.max(1,(R-L)));})
+  };
   localStorage.setItem('pbx_layout_'+boxSel.value, JSON.stringify(pack));
   status('Layout saved for '+boxSel.value);
-};
-document.getElementById('loadLayout').onclick=()=>{
-  if(!boxSel.value) return alert('Choose a box first.');
-  const s=localStorage.getItem('pbx_layout_'+boxSel.value); if(!s) return status('No saved layout for '+boxSel.value);
-  const pack=JSON.parse(s);
-  // if rows already detected, keep them; otherwise restore from saved fractions of H
-  if(!guides) resetGuides();
-  guides.rows = pack.rows.map(v=>Math.round(v*H));
-  // need L/R first; if not present, use full width
-  for(let r=0;r<5;r++){
-    if(!guides.LR[r]) guides.LR[r]=[Math.round(0.06*W),Math.round(0.94*W)];
-    const [L,R]=guides.LR[r];
-    guides.bounds[r]=pack.fracs[r].map(f=>Math.round(L+f*(R-L)));
-  }
-  computeROIs(); draw(); status('Layout loaded.');
-};
-document.getElementById('exportLayouts').onclick=()=>{
+}
+function loadLayout(){
+  const raw=localStorage.getItem('pbx_layout_'+boxSel.value); if(!raw){ status('No saved layout for '+boxSel.value); resetGuides(); return; }
+  const p=JSON.parse(raw);
+  guides={
+    rows:p.rows.map(f=>Math.round(f*H)),
+    LR:p.LR.map(([fl,fr])=>[Math.round(fl*W),Math.round(fr*W)]),
+    bounds:p.bounds.map((fracs,r)=>{const [L,R]=[Math.round(p.LR[r][0]*W),Math.round(p.LR[r][1]*W)]; return fracs.map(f=>Math.round(L+f*(R-L)));})
+  };
+  computeROIs(); buildRowSeg(); draw(); status('Layout loaded.');
+}
+function exportLayouts(){
   const all={};
   for(let i=0;i<localStorage.length;i++){
-    const k=localStorage.key(i); if(k.startsWith('pbx_layout_')) all[k.replace('pbx_layout_','')]=JSON.parse(localStorage.getItem(k));
+    const k=localStorage.key(i);
+    if(k.startsWith('pbx_layout_')) all[k.replace('pbx_layout_','')]=JSON.parse(localStorage.getItem(k));
   }
-  const blob=new Blob([JSON.stringify(all)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='phonebox_layouts.json'; a.click();
-};
-document.getElementById('importLayouts').addEventListener('change',e=>{
-  const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ const obj=JSON.parse(r.result); for(const [k,v] of Object.entries(obj)) localStorage.setItem('pbx_layout_'+k,JSON.stringify(v)); status('Layouts imported.'); }; r.readAsText(f);
-});
-useSaved.addEventListener('change',()=>{ if(useSaved.checked) document.getElementById('loadLayout').click(); });
+  const blob=new Blob([JSON.stringify(all)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='phonebox_layouts.json'; a.click();
+}
+function importLayouts(e){
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader(); r.onload=()=>{ const obj=JSON.parse(r.result); for(const [k,v] of Object.entries(obj)) localStorage.setItem('pbx_layout_'+k,JSON.stringify(v)); status('Layouts imported.'); }; r.readAsText(f);
+}
 
-/* --------------------- Analyze --------------------- */
-document.getElementById('analyze').onclick=async ()=>{
-  if(!rois.length) return alert('Calibrate first.');
-  roster=await loadRoster(); drawGrid(byBox(boxSel.value));
-  const names=byBox(boxSel.value), rows=[];
+/* ---------- Analyze ---------- */
+document.getElementById('analyze').onclick=()=>{
+  if(!rois.length) return alert('Align layout first.');
+  const names = namesForBox(boxSel.value);
+  drawGrid(names);
+  const rows=[];
   for(let i=0;i<rois.length;i++){
     const slot=i+1, expected=names[slot]||'';
-    const occ = isOccupied(cropROI(rois[i]));
+    const occ = occupied(cropROI(rois[i]));
     const status = occ ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
-    rows.push({slot, expected, status});
+    rows.push({slot,expected,status});
   }
   resultsBody.innerHTML='';
   rows.forEach(r=>{
-    const tr=document.createElement('tr'); tr.className = r.status==='missing'?'missing':(r.status==='present'?'ok':'');
+    const tr=document.createElement('tr'); tr.className=r.status==='missing'?'missing':(r.status==='present'?'ok':'');
     tr.innerHTML=`<td>${r.slot}</td><td>${r.expected||''}</td><td><span class="pill">${r.status}</span></td>`;
     resultsBody.appendChild(tr);
   });
 };
 
-/* --------------------- Editor interactions --------------------- */
-modeSeg.addEventListener('click',e=>{
-  if(e.target.tagName!=='BUTTON') return;
-  [...modeSeg.children].forEach(b=>b.classList.remove('active')); e.target.classList.add('active'); mode=e.target.dataset.mode; draw();
-});
-function buildRowPicker(){
-  rowPicker.innerHTML=''; for(let i=0;i<5;i++){ const b=document.createElement('button'); b.textContent='Row '+(i+1); if(i===selRow)b.classList.add('active'); b.onclick=()=>{ selRow=i; buildRowPicker(); draw(); }; rowPicker.appendChild(b); }
-}
-['nudgeM5','nudgeM1','nudgeP1','nudgeP5'].forEach(id=>document.getElementById(id).onclick=()=>nudge(id));
-function nudge(id){
-  const d = id==='nudgeM5'?-5:id==='nudgeM1'?-1:id==='nudgeP1'?1:5;
-  if(mode==='rows'){ guides.rows[selRow]=clamp(guides.rows[selRow]+d, 0, H-2); }
-  else if(mode==='edges'){ const [L,R]=guides.LR[selRow]; guides.LR[selRow]=[clamp(L+d,0,W-10),clamp(R+d,10,W)]; guides.bounds[selRow]=shiftArray(guides.bounds[selRow],d,0,W); }
-  else { // slots
-    const b=guides.bounds[selRow]; // move nearest boundary to view center
-    let idx=nearestIdx(b, viewToImageX(overlay.width/2));
-    b[idx]=clamp(b[idx]+d, idx?b[idx-1]+2:0, idx<b.length-1?b[idx+1]-2:W);
+/* ---------- Presence detection ---------- */
+function cropROI(r){const c=document.createElement('canvas'); c.width=r.w; c.height=r.h; const k=c.getContext('2d'); k.drawImage(currentImg, r.x,r.y,r.w,r.h, 0,0,r.w,r.h); return c;}
+function occupied(c){
+  const k=c.getContext('2d');
+  // center band to avoid walls & labels
+  const cx=Math.round(c.width*0.20), cw=Math.round(c.width*0.60);
+  const cy=Math.round(c.height*0.15), ch=Math.round(c.height*0.60);
+  const {data}=k.getImageData(cx,cy,cw,ch);
+  const cols=new Float32Array(cw).fill(0), dark=130;
+  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){
+    const i=(y*cw+x)*4; const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2];
+    if(L<dark) cols[x]++;
   }
-  computeROIs(); draw();
+  for(let x=0;x<cw;x++) cols[x]/=ch;
+  let best=0,run=0;
+  for(let x=0;x<cw;x++){ if(cols[x]>0.5){run++; best=Math.max(best,run);} else run=0; }
+  return best>=Math.round(cw*0.25);
 }
-function nearestIdx(arr,x){ let best=0, d=1e9; arr.forEach((v,i)=>{const dd=Math.abs(v-x); if(dd<d){d=dd; best=i;}}); return best; }
-function shiftArray(b,d,min,max){const out=b.map(v=>clamp(v+d,min,max)); return out;}
-function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
 
+/* ---------- Drawing ---------- */
 opacityEl.addEventListener('input', draw);
-
-/* zoom/pan */
-document.getElementById('zoomIn').onclick=()=>{ view.z=Math.min(4,view.z*1.25); draw(); };
-document.getElementById('zoomOut').onclick=()=>{ view.z=Math.max(0.5,view.z/1.25); draw(); };
-document.getElementById('zoomReset').onclick=()=>{ view={z:1,x:0,y:0}; img.style.transform=`translate(0px,0px) scale(1)`; draw(); };
-
-let panning=false, panStart=null;
-stage.addEventListener('pointerdown',e=>{ panning=true; panStart={x:e.clientX-view.x, y:e.clientY-view.y}; stage.setPointerCapture(e.pointerId); });
-stage.addEventListener('pointermove',e=>{ if(!panning) return; view.x=e.clientX-panStart.x; view.y=e.clientY-panStart.y; img.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.z})`; draw(); });
-stage.addEventListener('pointerup',()=>{ panning=false; });
-
-/* drag edit on overlay */
-stage.addEventListener('pointerdown', onDown);
-function onDown(e){
-  const {x,y}=toImageXY(e.clientX,e.clientY);
-  let hit=null;
-  if(mode==='rows'){
-    // nearest row
-    let best=1e9, idx=0;
-    guides.rows.forEach((yy,i)=>{const d=Math.abs(yy-y); if(d<best){best=d; idx=i;}});
-    hit={type:'row',i:idx,dy:guides.rows[idx]-y};
-  } else if(mode==='edges'){
-    // nearest L/R on selected row
-    const [L,R]=guides.LR[selRow]; const dL=Math.abs(L-x), dR=Math.abs(R-x);
-    hit={type:dL<dR?'L':'R', row:selRow, dx:(dL<dR?L:R)-x};
-  } else {
-    // nearest boundary on selected row
-    const b=guides.bounds[selRow]; let best=1e9, i=0; b.forEach((bx,bi)=>{const d=Math.abs(bx-x); if(d<best){best=d;i=bi;}}); hit={type:'B', row:selRow, idx:i, dx:b[i]-x};
-  }
-  const id=e.pointerId; stage.setPointerCapture(id);
-  stage.onpointermove=ev=>{
-    const p=toImageXY(ev.clientX,ev.clientY);
-    if(hit.type==='row'){
-      guides.rows[hit.i]=clamp(p.y+hit.dy, hit.i?guides.rows[hit.i-1]+10:0, hit.i<4?guides.rows[hit.i+1]-10:H-2);
-      computeROIs(); draw();
-    } else if(hit.type==='L' || hit.type==='R'){
-      const r=hit.row; const L=guides.LR[r][0], R=guides.LR[r][1];
-      let nx=clamp(p.x+hit.dx, 0, W);
-      if(hit.type==='L'){ nx=Math.min(nx,R-20); guides.LR[r][0]=nx; }
-      else { nx=Math.max(nx,L+20); guides.LR[r][1]=nx; }
-      // adjust bounds by anchoring fractions
-      const fr=guides.bounds[r].map(x=> (x-L)/Math.max(1,(R-L)));
-      guides.bounds[r]=fr.map(f=>Math.round(guides.LR[r][0]+f*(guides.LR[r][1]-guides.LR[r][0])));
-      computeROIs(); draw();
-    } else if(hit.type==='B'){
-      const r=hit.row, i=hit.idx, b=guides.bounds[r];
-      let nx=clamp(p.x+hit.dx, i?b[i-1]+2:0, i<b.length-1?b[i+1]-2:W);
-      b[i]=nx; computeROIs(); draw();
-    }
-  };
-  stage.onpointerup=()=>{ stage.onpointermove=null; stage.onpointerup=null; };
-}
-
-/* --------------------- Drawing --------------------- */
 function draw(){
   if(!currentImg||!guides){ ctx.clearRect(0,0,overlay.width,overlay.height); return; }
   const sx=overlay.width/W*view.z, sy=overlay.height/H*view.z;
   overlay.style.opacity=opacityEl.value;
-
   ctx.clearRect(0,0,overlay.width,overlay.height);
   ctx.save(); ctx.translate(view.x,view.y); ctx.scale(view.z,view.z);
 
-  // dim other rows when editing slots/edges
+  // Dim non-selected rows in edges/slots mode
   if(mode!=='rows'){
     ctx.fillStyle='rgba(0,0,0,0.25)';
-    guides.rows.forEach((y,i)=>{ if(i!==selRow){ ctx.fillRect(0, y-120, W, 240); } });
+    guides.rows.forEach((y,i)=>{ if(i!==selRow) ctx.fillRect(0, y-120, W, 240); });
   }
 
-  // cyan row lines
-  ctx.strokeStyle='var(--accent)'; ctx.lineWidth=2/ view.z;
-  guides.rows.forEach((y,i)=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
+  // Cyan row lines
+  ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent')||'#31ccff';
+  ctx.lineWidth=2/view.z;
+  guides.rows.forEach(y=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
 
-  // yellow L/R
-  ctx.strokeStyle='#ffd84a'; ctx.lineWidth=1.5/ view.z;
-  guides.LR.forEach(([L,R],i)=>{ const y=guides.rows[i]; const h=80;
+  // Yellow L/R per row
+  ctx.strokeStyle='#ffd84a'; ctx.lineWidth=1.5/view.z;
+  guides.LR.forEach(([L,R],i)=>{ const y=guides.rows[i], h=80;
     ctx.beginPath(); ctx.moveTo(L,y-h); ctx.lineTo(L,y+h); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(R,y-h); ctx.lineTo(R,y+h); ctx.stroke();
   });
 
-  // white boundaries
-  ctx.strokeStyle='#fff'; ctx.lineWidth=(mode==='slots'?3:1.8)/ view.z;
+  // White boundaries per row
+  ctx.strokeStyle='#fff'; ctx.lineWidth=(mode==='slots'?3:1.8)/view.z;
   guides.bounds.forEach((b,i)=>{ const y=guides.rows[i], h=90; b.forEach(x=>{ ctx.beginPath(); ctx.moveTo(x,y-h); ctx.lineTo(x,y+h); ctx.stroke(); }); });
 
-  // slot rectangles
-  ctx.strokeStyle='#ffffffea'; ctx.lineWidth=2/ view.z;
-  for(const r of rois){ ctx.strokeRect(r.x, r.y, r.w, r.h); }
+  // Slot rectangles
+  rois.forEach(r=>{ ctx.strokeStyle='#ffffffea'; ctx.lineWidth=2/view.z; ctx.strokeRect(r.x,r.y,r.w,r.h); });
 
   ctx.restore();
 }
 
-/* --------------------- Blue bars & OCR helpers --------------------- */
-function downscale(img, maxW=1200){ const r=Math.min(1,maxW/img.naturalWidth); const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r); c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c; }
-function rgb2hsv(r,g,b){r/=255;g/=255;b/=255;const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;let h=0;if(d!==0){if(max===r)h=((g-b)/d)%6;else if(max===g)h=(b-r)/d+2;else h=(r-g)/d+4;h*=60;if(h<0)h+=360;}const s=max===0?0:d/max,v=max;return{h,s,v};}
-function findBlueBars(canvas,{hueMin,hueMax,sMin,vMin,edge}){const cx=canvas.getContext('2d'),{width:W,height:H}=canvas;const {data}=cx.getImageData(0,0,W,H);const x0=Math.round(W*edge), x1=Math.round(W*(1-edge));const frac=new Float32Array(H);for(let y=0;y<H;y++){let cnt=0,blue=0;for(let x=x0;x<=x1;x+=2){const i=(y*W+x)*4;const {h,s,v}=rgb2hsv(data[i],data[i+1],data[i+2]);if((h>hueMin&&h<hueMax)&&s>=sMin&&v>=vMin)blue++;cnt++;}frac[y]=cnt?blue/cnt:0;} // smooth & pick 5 peaks
-  const s=smooth(frac,6), idx=topPeaks(s,5,Math.round(H/8)); const tops=[]; const win=Math.round(H*0.035); for(const p of idx){const a=Math.max(0,p-win), b=Math.min(H-1,p+win); let M=0; for(let y=a;y<=b;y++) M=Math.max(M,s[y]); const T=M*0.5; let top=p; for(let y=p;y>=a;y--){if(s[y]>=T) top=y; else break;} tops.push(top); } return tops.sort((a,b)=>a-b);}
-function smooth(arr,w){const o=new Float32Array(arr.length); for(let i=0;i<arr.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=arr.length) continue; s+=arr[j]; c++;} o[i]=s/c;} return o;}
-function topPeaks(s,count,minDist){const idx=[...s].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const out=[]; for(const [,i] of idx){ if(out.every(j=>Math.abs(j-i)>minDist)) out.push(i); if(out.length>=count) break; } return out.sort((a,b)=>a-b);}
-function avgGap(a){const g=[]; for(let i=1;i<a.length;i++) g.push(a[i]-a[i-1]); return g.reduce((x,y)=>x+y,0)/g.length;}
-function blueByColumn(im, y0,y1){const {data,width:W}=im; const col=new Float32Array(W).fill(0); for(let x=0;x<W;x++){let s=0; for(let y=y0;y<=y1;y++){const i=(y*W+x)*4; const {h,s:S,v}=rgb2hsv(data[i],data[i+1],data[i+2]); if((h>hueMin&&h<hueMax)&&S>=sMin&&v>=vMin) s++;} col[x]=s;} return smooth(col,6);}
-function blueRun(col,pad){const W=col.length,L=pad,R=W-pad-1;const thr=q(col.slice(L,R+1),0.55); const m=new Uint8Array(W); for(let x=L;x<=R;x++) m[x]=col[x]>=thr?1:0; // widest run
-  let best=[L,R],w=0,run=false,s=L; for(let x=L;x<=R;x++){if(m[x]&&!run){run=true;s=x;} if((!m[x]||x===R)&&run){const e=(!m[x]&&x>L)?x-1:x; const ww=e-s; if(ww>w){w=ww; best=[s,e];} run=false;}} return best;}
-function q(a,p){const b=[...a].sort((x,y)=>x-y); const i=Math.max(0,Math.min(b.length-1,Math.floor(p*(b.length-1)))); return b[i];}
-function docrop(src,x,y,w,h){const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(src,x,y,w,h,0,0,w,h); return c;}
-function dedupe(nums,px){if(!nums.length) return nums; const out=[nums[0]]; for(let i=1;i<nums.length;i++){ if(Math.abs(nums[i].x-out[out.length-1].x)>px) out.push(nums[i]); } return out;}
-function boundsFromCenters(cx,target,L,R){while(cx.length>target){let bi=0, best=1e9; for(let i=0;i<cx.length-1;i++){const g=cx[i+1]-cx[i]; if(g<best){best=g;bi=i;}} cx.splice(bi,2,(cx[bi]+cx[bi+1])/2);} while(cx.length<target){let bi=0,best=-1; for(let i=0;i<cx.length-1;i++){const g=cx[i+1]-cx[i]; if(g>best){best=g;bi=i;}} cx.splice(bi+1,0,(cx[bi]+cx[bi+1])/2);} const b=[Math.round(cx[0]-(cx[1]-cx[0])/2)]; for(let i=0;i<cx.length-1;i++) b.push(Math.round((cx[i]+cx[i+1])/2)); b.push(Math.round(cx[cx.length-1]+(cx[cx.length-1]-cx[cx.length-2])/2)); b[0]=Math.max(b[0],L); b[b.length-1]=Math.min(b[b.length-1],R); return b;}
+/* ---------- Interaction: drag edit ---------- */
+let dragging=null;
+stage.addEventListener('pointerdown', e=>{
+  if(!currentImg||!guides) return;
+  const {ix,iy}=screenToImage(e.clientX,e.clientY);
+  if(mode==='rows'){
+    // pick nearest row
+    let i=0,b=1e9; guides.rows.forEach((y,ri)=>{const d=Math.abs(y-iy); if(d<b){b=d;i=ri;}}); dragging={type:'row',i,dy:guides.rows[i]-iy};
+  }else if(mode==='edges'){
+    // nearest L or R on current row
+    const [L,R]=guides.LR[selRow]; const dL=Math.abs(L-ix), dR=Math.abs(R-ix);
+    dragging={type:dL<dR?'L':'R', row:selRow, dx:(dL<dR?L:R)-ix};
+  }else{
+    // nearest boundary on current row
+    const b=guides.bounds[selRow]; let bi=0,bd=1e9; b.forEach((x,i)=>{const d=Math.abs(x-ix); if(d<bd){bd=d;bi=i;}}); dragging={type:'B', row:selRow, idx:bi, dx:b[bi]-ix};
+  }
+  stage.setPointerCapture(e.pointerId);
+});
+stage.addEventListener('pointermove', e=>{
+  if(!dragging) return;
+  const {ix,iy}=screenToImage(e.clientX,e.clientY);
+  if(dragging.type==='row'){
+    const i=dragging.i;
+    let y=iy+dragging.dy;
+    const min = i?guides.rows[i-1]+20:0;
+    const max = i<4?guides.rows[i+1]-20:H-2;
+    guides.rows[i]=clamp(y,min,max);
+  }else if(dragging.type==='L'||dragging.type==='R'){
+    const r=dragging.row; let x=ix+dragging.dx; let [L,R]=guides.LR[r];
+    if(dragging.type==='L'){ x=clamp(x,0,R-20); L=x; }
+    else { x=clamp(x,L+20,W); R=x; }
+    // remap bounds by fractions
+    const fr=guides.bounds[r].map(v=> (v-guides.LR[r][0]) / Math.max(1,(guides.LR[r][1]-guides.LR[r][0])) );
+    guides.LR[r]=[L,R];
+    guides.bounds[r]=fr.map(f=>Math.round(L+f*(R-L)));
+  }else{
+    const r=dragging.row, i=dragging.idx, b=guides.bounds[r]; let x=ix+dragging.dx;
+    const min=i?b[i-1]+2:0, max=i<b.length-1?b[i+1]-2:W;
+    b[i]=clamp(x,min,max);
+  }
+  computeROIs(); draw();
+});
+stage.addEventListener('pointerup', ()=>dragging=null);
 
-/* --------------------- ROI + presence --------------------- */
-function cropROI(r){const c=document.createElement('canvas'); c.width=r.w; c.height=r.h; const ctx2=c.getContext('2d'); ctx2.drawImage(currentImg, r.x,r.y,r.w,r.h, 0,0,r.w,r.h); return c;}
-function isOccupied(c){const ctx2=c.getContext('2d'); const cx=Math.round(c.width*0.20), cw=Math.round(c.width*0.60), cy=Math.round(c.height*0.15), ch=Math.round(c.height*0.60); const {data}=ctx2.getImageData(cx,cy,cw,ch); const cols=new Float32Array(cw).fill(0); for(let y=0;y<ch;y++){for(let x=0;x<cw;x++){const i=(y*cw+x)*4; const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; if(L<130) cols[x]++;}} for(let x=0;x<cw;x++) cols[x]/=ch; let best=0,run=0; for(let x=0;x<cw;x++){ if(cols[x]>0.5){run++; best=Math.max(best,run);} else run=0;} return best>=Math.round(cw*0.25);}
+/* ---------- Zoom / Pan ---------- */
+document.getElementById('zoomIn').onclick=()=>{ view.z=Math.min(4,view.z*1.25); img.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.z})`; draw(); };
+document.getElementById('zoomOut').onclick=()=>{ view.z=Math.max(0.5,view.z/1.25); img.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.z})`; draw(); };
+document.getElementById('zoomReset').onclick=()=>{ view={z:1,x:0,y:0}; img.style.transform=`translate(0px,0px) scale(1)`; draw(); };
+let panning=false, p0=null;
+stage.addEventListener('pointerdown', e=>{ if(e.button===1 || e.shiftKey){ panning=true; p0={x:e.clientX-view.x,y:e.clientY-view.y}; stage.setPointerCapture(e.pointerId);} });
+stage.addEventListener('pointermove', e=>{ if(!panning) return; view.x=e.clientX-p0.x; view.y=e.clientY-p0.y; img.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.z})`; draw(); });
+stage.addEventListener('pointerup', ()=>panning=false);
 
-/* --------------------- Utils --------------------- */
-function status(t){ statusEl.textContent=t; }
-function toImageXY(cx,cy){ const rect=overlay.getBoundingClientRect(); const x=(cx-rect.left-view.x)/view.z * (W/overlay.width); const y=(cy-rect.top -view.y)/view.z * (H/overlay.height); return {x:x*(overlay.width/W), y:y*(overlay.height/H)} /* not used */ }
-function viewToImageX(x){ const rect=overlay.getBoundingClientRect(); return (x-view.x)/view.z * (W/overlay.width) * (overlay.width/W); } // used by nudge; rough center convert
-function smoothScroll(){}
+function screenToImage(cx,cy){
+  const r=overlay.getBoundingClientRect();
+  const x=(cx-r.left-view.x)/view.z * (W/overlay.width);
+  const y=(cy-r.top -view.y)/view.z * (H/overlay.height);
+  return {ix:x, iy:y};
+}
+function imgX(px){ return (px-view.x)/view.z * (W/overlay.width); }
 
-/* initial */
-resetGuides(); buildRowPicker(); drawGrid(); status('Upload a photo, then use Rows/Edges/Slots to line it up. Use “From OCR” to seed the slots.');
+/* ---------- Start ---------- */
+status('Upload a photo, align rows/edges/slots, then “Save layout”. Use “Copy row → all” to speed up.');
 </script>
 </body>
 </html>
