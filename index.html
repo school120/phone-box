@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Phone Box Attendance — Precise Blue-Bar Alignment</title>
+<title>Phone Box Attendance — Row-wise Blue Alignment (12×5)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
@@ -55,7 +55,7 @@
 <body>
 <header>
   <div style="font-weight:800">📱 Phone Box Attendance</div>
-  <div class="badge">Precise blue-bar anchoring • 12×5</div>
+  <div class="badge">Row-wise blue alignment • 12 columns per row</div>
 </header>
 <main>
   <div class="wrap">
@@ -88,10 +88,10 @@
         <div>
           <label>Calibration</label>
           <div style="display:flex; gap:8px; flex-wrap:wrap">
-            <button id="autoBtn" class="primary">Auto-calibrate (precise)</button>
-            <button id="forceGridBtn">Show simple grid</button>
+            <button id="autoBtn" class="primary">Auto-calibrate (precise rows + per-row columns)</button>
+            <button id="forceGridBtn">Show simple equal grid</button>
           </div>
-          <small>The cyan line is the <b>top edge</b> of each blue number strip. Rectangles sit <b>directly above</b> that line.</small>
+          <small>Cyan lines = <b>top edge</b> of each blue strip. Yellow ticks = <b>per-row</b> slot boundaries. Rectangles sit <b>directly above</b> the blue.</small>
         </div>
       </div>
 
@@ -166,7 +166,7 @@ const edgeCropPctEl=document.getElementById('edgeCropPct'), phonePctEl=document.
 const blueListEl=document.getElementById('blueList');
 
 let roster=[], boxConfig={}, mobilenetModel=null, currentImage=null, lastRecords=null;
-let guides=null; // {tops[], centers[], bounds[]}
+let guides=null; // {tops[], boundsByRow[5][13]}
 
 /* ---------- Roster ---------- */
 async function loadRoster(){
@@ -241,12 +241,20 @@ function drawOverlay(){
   const scaleX=overlay.width/currentImage.naturalWidth, scaleY=overlay.height/currentImage.naturalHeight;
 
   if(toggleGuides.checked && guides){
-    // cyan: precise top-of-blue; yellow: column bounds
-    ctx.strokeStyle=varAccent(); ctx.lineWidth=2;
+    // cyan = top edge of blue bar
+    ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent')||'#3ad0ff'; ctx.lineWidth=2;
     (guides.tops||[]).forEach(y=>{ const yy=y*scaleY; ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(overlay.width,yy); ctx.stroke(); });
-    if(guides.bounds){
-      ctx.strokeStyle='#ffd63a'; ctx.lineWidth=1.25;
-      guides.bounds.forEach(x=>{ const xx=x*scaleX; ctx.beginPath(); ctx.moveTo(xx,0); ctx.lineTo(xx,overlay.height); ctx.stroke(); });
+    // yellow = per-row column bounds (draw short ticks around that row to avoid clutter)
+    ctx.strokeStyle='#ffd63a'; ctx.lineWidth=1.25;
+    if(guides.boundsByRow){
+      const tickH = Math.max(10, overlay.height*0.05);
+      guides.boundsByRow.forEach((bounds,ri)=>{
+        const yy = (guides.tops[ri]||0)*scaleY;
+        bounds.forEach(x=>{
+          const xx=x*scaleX;
+          ctx.beginPath(); ctx.moveTo(xx, yy - tickH); ctx.lineTo(xx, yy + tickH); ctx.stroke();
+        });
+      });
     }
   }
 
@@ -263,9 +271,8 @@ function drawOverlay(){
     });
   }
 }
-function varAccent(){ return getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#3ad0ff'; }
 
-/* ---------- Calibration (precise rows + equal columns) ---------- */
+/* ---------- Calibration (precise rows + 12 columns PER ROW) ---------- */
 document.getElementById('autoBtn').addEventListener('click', autoCalibratePrecise);
 document.getElementById('forceGridBtn').addEventListener('click', forceSimpleGrid);
 
@@ -275,10 +282,11 @@ function forceSimpleGrid(){
   const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
   const tops=[0.22,0.40,0.58,0.76,0.94].map(p=>Math.round(p*H)); // rough fallback
   const bounds = equalBounds(W, edgeCropPct());
-  const rois = buildROIs(tops, bounds, W, H);
+  const boundsByRow=[0,1,2,3,4].map(()=>bounds);
+  const rois = buildROIs(tops, boundsByRow, W, H);
   boxConfig[box]={roisDetect:rois};
-  guides={tops, bounds};
-  statusEl.textContent='Simple grid shown.';
+  guides={tops, boundsByRow};
+  statusEl.textContent='Simple equal grid shown.';
   drawOverlay();
 }
 
@@ -296,36 +304,53 @@ async function autoCalibratePrecise(){
 
   if(tops.length!==5){
     forceSimpleGrid();
-    alert('Could not reliably find 5 blue bars — showing simple grid instead.');
+    alert('Could not find 5 blue bars — showing simple grid instead.');
     return;
   }
   blueListEl.textContent = tops.map(y=>y.toFixed(0)).join(', ');
 
-  const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
-  const bounds = equalBounds(W, edgeCropPct());
-  const rois = buildROIs(tops, bounds, W, H);
+  // For each row independently, find 12 pads from the blue strip band
+  const boundsByRow=[];
+  const ctx = small.getContext('2d');
+  const im = ctx.getImageData(0,0,small.width,small.height);
+  const Wbig=currentImage.naturalWidth, Hbig=currentImage.naturalHeight;
+  const scaleX = small.width / Wbig, scaleY = small.height / Hbig;
+
+  // estimate row gap to size the blue band to analyze
+  const gaps=[]; for(let i=1;i<tops.length;i++) gaps.push(tops[i]-tops[i-1]);
+  const avgGapSmall = gaps.length? gaps.reduce((a,b)=>a+b,0)/gaps.length : small.height/5;
+  const bandHSmall = Math.max(6, Math.round(avgGapSmall*0.22)); // 22% of row gap, covers number strip
+
+  for(const topBig of tops){
+    const topSmall = Math.max(0, Math.round(topBig*scaleY));
+    const bnds = find12ColumnsFromBlueBand(im, topSmall, bandHSmall, edgeCropPct(), {hueMin,hueMax,sMin,vMin});
+    boundsByRow.push(bnds.map(x=> Math.round(x/scaleX))); // rescale to full image coordinates
+  }
+
+  const rois = buildROIs(tops, boundsByRow, Wbig, Hbig);
   boxConfig[box]={roisDetect:rois};
-  guides={tops, bounds};
-  statusEl.textContent='Calibrated: rectangles are directly above the blue strips.';
+  guides={tops, boundsByRow};
+  statusEl.textContent='Calibrated: row-wise columns and rectangles are above the blue strips.';
   drawOverlay();
 }
 
-function buildROIs(tops, bounds, W, H){
-  // 12 columns from 13 bounds; add insets so walls/foam aren’t treated as phones
-  const cols=[]; for(let i=0;i<12;i++){ cols.push([bounds[i], bounds[i+1]]); }
-  // detection band height from average row gap
+/* --- Build ROIs from per-row bounds --- */
+function buildROIs(tops, boundsByRow, W, H){
+  const rois=[];
+  // detect height uses row gap from tops:
   const gaps=[]; for(let i=1;i<tops.length;i++) gaps.push(tops[i]-tops[i-1]);
   const rowGap = gaps.length? gaps.reduce((a,b)=>a+b,0)/gaps.length : H/5;
   const detectH = Math.max(10, Math.round(rowGap * (parseInt(phonePctEl.value,10)/100)));
 
-  const rois=[];
-  for(const top of tops){
-    const yBottom = Math.max(0, top);          // bottom = top edge of blue strip
+  for(let r=0;r<5;r++){
+    const yBottom = Math.max(0, tops[r]);
     const yTop    = Math.max(0, yBottom - detectH);
-    for(let c=0;c<cols.length;c++){
-      const x0=cols[c][0], x1=cols[c][1];
+    const bounds = boundsByRow[r];
+    for(let c=0;c<12;c++){
+      const x0=bounds[c], x1=bounds[c+1];
+      // inset: 12% base; add 20% at edges
       const base = Math.round((x1-x0)*0.12);
-      const edgeExtra = (c===0 || c===cols.length-1) ? Math.round((x1-x0)*0.20) : 0;
+      const edgeExtra = (c===0 || c===11) ? Math.round((x1-x0)*0.20) : 0;
       const xa = x0 + Math.max(base, edgeExtra);
       const xb = x1 - Math.max(base, edgeExtra);
       rois.push({x:xa/W, y:yTop/H, w:(xb-xa)/W, h:(yBottom-yTop)/H});
@@ -333,44 +358,93 @@ function buildROIs(tops, bounds, W, H){
   }
   return rois;
 }
-function equalBounds(W, edge){ // 13 vertical lines, 12 equal slots
-  const L=Math.round(W*edge), R=Math.round(W*(1-edge));
-  const usable=R-L; const step=usable/12;
-  const b=[L]; for(let i=1;i<12;i++) b.push(Math.round(L+i*step)); b.push(R);
-  return b;
-}
-function edgeCropPct(){ return (parseInt(edgeCropPctEl.value,10))/100; }
 
-/* ---------- Precise blue-bar finder (TOP edges) ---------- */
-function downscale(img, maxW=900){
-  const r=Math.min(1,maxW/img.naturalWidth);
-  const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r);
-  c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c;
+/* --- Per-row column finding from blue band --- */
+function find12ColumnsFromBlueBand(imageData, topY, bandH, edgeCrop, hsv){
+  const {data,width:W,height:H}=imageData;
+  const xL=Math.round(W*edgeCrop), xR=Math.round(W*(1-edgeCrop));
+  // accumulate "blue count" per column inside the band starting slightly below top (to sit inside blue)
+  const y0=Math.min(H-1, Math.max(0, topY+1)), y1=Math.min(H-1, y0+bandH);
+
+  const col=new Float32Array(W).fill(0);
+  for(let x=xL; x<=xR; x++){
+    let s=0; for(let y=y0; y<=y1; y++){
+      const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2];
+      const {h,s:S,v}=rgb2hsv(r,g,b);
+      if((h>hsv.hueMin && h<hsv.hueMax) && S>=hsv.sMin && v>=hsv.vMin) s++;
+    }
+    col[x]=s;
+  }
+  // smooth + threshold
+  const sm = smooth1D(col, 6);
+  const thr0 = quantile(sm.slice(xL,xR+1), 0.50);
+  let mask = new Uint8Array(W).fill(0); for(let x=xL;x<=xR;x++) mask[x] = sm[x] >= thr0 ? 1 : 0;
+  mask = close1D(mask, Math.max(1, Math.round(W/450))); // fill digit holes
+
+  // runs → exactly 12 using merge/split strategies
+  let runs = runsFromMask(mask, xL, xR);
+  runs = filterMinWidth(runs, Math.round(W/40)); // ~2.5% width minimum
+  runs = normalizeRunsTo12(runs, xL, xR);
+
+  // convert to 13 bounds (midpoints between adjacent centers; edges extrapolated)
+  const centers=runs.map(r=>Math.round((r.start+r.end)/2));
+  const bounds=[Math.round((3*centers[0]-centers[1])/2)];
+  for(let k=0;k<centers.length-1;k++) bounds.push(Math.round((centers[k]+centers[k+1])/2));
+  bounds.push(Math.round((3*centers[11]-centers[10])/2));
+  bounds[0]=Math.max(bounds[0], xL); bounds[12]=Math.min(bounds[12], xR);
+  return bounds;
 }
+
+function normalizeRunsTo12(runs, L, R){
+  if(runs.length===12) return runs;
+  // Too many: merge by smallest gaps
+  while(runs.length>12){
+    let bestI=-1, bestGap=1e9;
+    for(let i=0;i<runs.length-1;i++){
+      const gap=runs[i+1].start - runs[i].end - 1;
+      if(gap<bestGap){ bestGap=gap; bestI=i; }
+    }
+    runs[bestI]={start:runs[bestI].start,end:runs[bestI+1].end};
+    runs.splice(bestI+1,1);
+  }
+  // Too few: split widest runs
+  while(runs.length<12){
+    let bestI=-1, bestW=-1;
+    for(let i=0;i<runs.length;i++){
+      const w=runs[i].end - runs[i].start + 1;
+      if(w>bestW){ bestW=w; bestI=i; }
+    }
+    const s=runs[bestI].start, e=runs[bestI].end, mid=Math.round((s+e)/2);
+    runs.splice(bestI,1,{start:s,end:mid-1},{start:mid,end:e});
+  }
+  return runs;
+}
+
+/* ---------- Math / helpers ---------- */
 function rgb2hsv(r,g,b){
   r/=255; g/=255; b/=255;
   const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min; let h=0;
   if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; }
   const s=max===0?0:d/max, v=max; return {h,s,v};
 }
-function smooth1D(arr, w=5){
-  const out=new Float32Array(arr.length);
-  for(let i=0;i<arr.length;i++){ let s=0,c=0; for(let k=-w;k<=w;k++){ const j=i+k; if(j<0||j>=arr.length) continue; s+=arr[j]; c++; } out[i]=s/c; }
-  return out;
-}
-function pickPeaks(series, count, minDist){
-  const idx=[...series].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]);
-  const sel=[]; for(const [,i] of idx){ if(sel.every(j=>Math.abs(j-i)>minDist)) sel.push(i); if(sel.length>=count) break; }
-  return sel.sort((a,b)=>a-b);
-}
+function downscale(img, maxW=900){ const r=Math.min(1,maxW/img.naturalWidth); const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r); c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c; }
+function smooth1D(arr, w=5){ const out=new Float32Array(arr.length); for(let i=0;i<arr.length;i++){ let s=0,c=0; for(let k=-w;k<=w;k++){ const j=i+k; if(j<0||j>=arr.length) continue; s+=arr[j]; c++; } out[i]=s/c; } return out; }
+function pickPeaks(series, count, minDist){ const idx=[...series].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const sel=[]; for(const [,i] of idx){ if(sel.every(j=>Math.abs(j-i)>minDist)) sel.push(i); if(sel.length>=count) break; } return sel.sort((a,b)=>a-b); }
+function quantile(a,q){ const b=[...a].sort((x,y)=>x-y); const i=Math.max(0,Math.min(b.length-1, Math.floor(q*(b.length-1)))); return b[i]; }
+function runsFromMask(mask, L, R){ const out=[]; let inRun=false, s=L; for(let x=L; x<=R; x++){ if(mask[x] && !inRun){ inRun=true; s=x; } if((!mask[x] || x===R) && inRun){ const e = (!mask[x] && x> L) ? x-1 : x; out.push({start:s,end:e}); inRun=false; } } return out; }
+function filterMinWidth(runs, minW){ return runs.filter(r => (r.end-r.start+1) >= minW); }
+function close1D(mask, rad){ return erode1D(dilate1D(mask,rad),rad); }
+function dilate1D(mask, rad){ const out=new Uint8Array(mask.length); for(let i=0;i<mask.length;i++){ let v=0; for(let k=-rad;k<=rad;k++){ const j=i+k; if(j>=0&&j<mask.length&&mask[j]){ v=1; break; } } out[i]=v; } return out; }
+function erode1D(mask, rad){ const out=new Uint8Array(mask.length); for(let i=0;i<mask.length;i++){ let v=1; for(let k=-rad;k<=rad;k++){ const j=i+k; if(!(j>=0&&j<mask.length&&mask[j])){ v=0; break; } } out[i]=v; } return out; }
+function equalBounds(W, edge){ const L=Math.round(W*edge), R=Math.round(W*(1-edge)); const w=R-L; const step=w/12; const b=[L]; for(let i=1;i<12;i++) b.push(Math.round(L+i*step)); b.push(R); return b; }
+function edgeCropPct(){ return (parseInt(edgeCropPctEl.value,10))/100; }
+
+/* ---------- Precise blue-bar finder (TOP edges) ---------- */
 async function findBlueBarsPrecise(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}) {
   const ctx = canvas.getContext('2d');
-  const { data, width: W, height: H } =
-    ctx.getImageData(0, 0, canvas.width, canvas.height);
-
+  const { data, width: W, height: H } = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const x0 = Math.round(W*edgeCrop), x1 = Math.round(W*(1-edgeCrop));
 
-  // per-row "blue fraction" profile
   const frac = new Float32Array(H);
   for (let y = 0; y < H; y++) {
     let cnt = 0, blue = 0;
@@ -384,11 +458,8 @@ async function findBlueBarsPrecise(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}) {
     frac[y] = cnt ? blue/cnt : 0;
   }
   let s = smooth1D(frac, 6);
-
-  // peak rows (centers of the blue bands)
   let peaks = pickPeaks(s, 5, Math.round(H/8));
   if (peaks.length < 5) {
-    // relax once
     for (let y = 0; y < H; y++) {
       let cnt = 0, blue = 0;
       for (let x = x0; x <= x1; x += 1) {
@@ -405,21 +476,17 @@ async function findBlueBarsPrecise(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}) {
     peaks = pickPeaks(s, 5, Math.round(H/9));
   }
 
-  // refine each peak to TOP and BOTTOM edges of the blue strip
   const tops=[], centers=[], bottoms=[];
-  const win = Math.round(H*0.035); // ~3.5% of height around each peak
+  const win = Math.round(H*0.035);
   for (const p of peaks) {
     const a = Math.max(0, p - win), b = Math.min(H-1, p + win);
     let localMax = 0; for (let y=a; y<=b; y++) localMax = Math.max(localMax, s[y]);
-    const T = localMax * 0.50; // 50% of local max — robust
+    const T = localMax * 0.50;
     let top=p, bottom=p;
     for (let y=p; y>=a; y--) { if (s[y] >= T) top = y; else break; }
     for (let y=p; y<=b; y++) { if (s[y] >= T) bottom = y; else break; }
-    tops.push(top);
-    centers.push(Math.round((top+bottom)/2));
-    bottoms.push(bottom);
+    tops.push(top); centers.push(Math.round((top+bottom)/2)); bottoms.push(bottom);
   }
-  // Ensure we return 5 lanes sorted top→bottom
   const order=[...tops.keys()].sort((i,j)=>tops[i]-tops[j]);
   return {
     tops: order.map(i=>tops[i]),
