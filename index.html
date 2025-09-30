@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Phone Box Attendance</title>
+<title>Phone Box Attendance (Blue-Row Aligner)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
@@ -58,7 +58,7 @@
 <body>
 <header>
   <div style="font-weight:800">📱 Phone Box Attendance</div>
-  <div class="badge">Client-only (GitHub Pages)</div>
+  <div class="badge">Blue-Row Aligner • Client-only</div>
 </header>
 <main>
   <div class="wrap">
@@ -94,10 +94,10 @@
         <div>
           <label>Calibration</label>
           <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <button id="autoBlueBtn" class="primary">Auto-calibrate (5 blue bars x 12 numbers)</button>
             <button id="calibrateBtn">Manual 12×5 grid (fallback)</button>
-            <button id="autoBlueBtn" class="primary">Auto-calibrate (5 blue bars)</button>
           </div>
-          <small>Anchors rows to the 5 blue number bars; detects 12 vertical channels.</small>
+          <small>Locks rows to the 5 blue number bars and columns to the 12 blue number pads in each row.</small>
         </div>
       </div>
 
@@ -123,8 +123,11 @@
             <label>Blue detect min value (V 0–1)
               <input id="blueVal" type="range" min="0" max="1" step="0.01" value="0.25">
             </label>
-            <label>Top margin (%)
-              <input id="topPct" type="range" min="0" max="25" step="1" value="10">
+            <label>Label band height (% of image height)
+              <input id="labelPct" type="range" min="1" max="6" step="1" value="3">
+            </label>
+            <label>Phone band height (% of row height)
+              <input id="phonePct" type="range" min="30" max="100" step="5" value="70">
             </label>
             <div style="font-size:12px;color:var(--muted)">Detected blue bars y: <span id="blueList">—</span></div>
           </div>
@@ -154,11 +157,11 @@ const photoInput=document.getElementById('photo'), preview=document.getElementBy
 const statusEl=document.getElementById('status'), resultsBody=document.getElementById('resultsBody');
 const rosterChoice=document.getElementById('rosterChoice'), rosterUpload=document.getElementById('rosterUpload');
 const boxGrid=document.getElementById('boxGrid'), toggleOverlay=document.getElementById('toggleOverlay');
-const blueSatEl=document.getElementById('blueSat'), blueValEl=document.getElementById('blueVal'), topPctEl=document.getElementById('topPct');
+const blueSatEl=document.getElementById('blueSat'), blueValEl=document.getElementById('blueVal');
+const labelPctEl=document.getElementById('labelPct'), phonePctEl=document.getElementById('phonePct');
 const blueListEl=document.getElementById('blueList');
 
 let roster=[], boxConfig={}, mobilenetModel=null, currentImage=null, lastRecords=null;
-let yBlueList = []; // array of 5 normalized y positions (0..1)
 
 /* ---------- Roster ---------- */
 async function loadRoster(){
@@ -233,93 +236,120 @@ function drawOverlay(){
 
   const scaleX=overlay.width/currentImage.naturalWidth, scaleY=overlay.height/currentImage.naturalHeight;
 
-  // draw 5 blue baselines if detected
-  if(yBlueList.length===5){
-    ctx.strokeStyle='#3aa0ff'; ctx.lineWidth=2;
-    yBlueList.forEach(yN=>{
-      const y=yN*currentImage.naturalHeight*scaleY;
-      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(overlay.width,y); ctx.stroke();
+  // draw label-band ROIs only (thin, sits on blue pads)
+  if(cfg.roisLabel){
+    ctx.lineWidth=2; ctx.strokeStyle='rgba(58,160,255,.95)';
+    cfg.roisLabel.forEach(roi=>{
+      const x=roi.x*currentImage.naturalWidth*scaleX;
+      const y=roi.y*currentImage.naturalHeight*scaleY;
+      const w=roi.w*currentImage.naturalWidth*scaleX;
+      const h=roi.h*currentImage.naturalHeight*scaleY;
+      ctx.strokeRect(x,y,w,h);
     });
   }
-
-  cfg.rois.forEach((roi,i)=>{
-    const x=roi.x*currentImage.naturalWidth*scaleX;
-    const y=roi.y*currentImage.naturalHeight*scaleY;
-    const w=roi.w*currentImage.naturalWidth*scaleX;
-    const h=roi.h*currentImage.naturalHeight*scaleY;
-    const status = lastRecords ? lastRecords[i].status : null;
-    ctx.lineWidth=2;
-    ctx.strokeStyle = status==='ok' ? '#3ad27a' : status==='missing' ? '#ff6e6e' : 'rgba(255,255,255,.8)';
-    ctx.strokeRect(x,y,w,h);
-  });
 }
 
-/* ---------- Calibration ---------- */
-// Fallback: simple normalized 12×5 grid
-document.getElementById('calibrateBtn').addEventListener('click',()=>{
-  const box=document.getElementById('boxSelect').value||'AUTO';
-  if(!currentImage) return alert('Take or upload a photo first.');
-  const rois=[]; const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
-  const padX=0.08*W, padY=0.10*H; const gridW=W-2*padX, gridH=H-2*padY;
-  const cellW=gridW/12, cellH=gridH/5;
-  for(let r=0;r<5;r++) for(let c=0;c<12;c++){
-    rois.push({x:(padX+c*cellW)/W, y:(padY+r*cellH)/H, w:cellW/W, h:cellH/H});
-  }
-  boxConfig[box]={rois}; localStorage.setItem('phonebox_config',JSON.stringify(boxConfig));
-  alert('Calibrated with simple grid. Use Auto-calibrate for best alignment.');
-  drawOverlay();
-});
-
-// Auto-calibration using 5 blue bars + vertical channels
+/* ---------- Calibration: 5 rows × 12 pads ---------- */
 document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
   if(!currentImage) return alert('Take or upload a photo first.');
   const box=document.getElementById('boxSelect').value||'AUTO';
-  statusEl.textContent='Auto-calibrating (5 blue bars)…';
+  statusEl.textContent='Auto-calibrating (5 blue bars × 12 pads)…';
 
-  const small = downscale(currentImage, 1000);
+  const sMin=parseFloat(blueSatEl.value||'0.35');
+  const vMin=parseFloat(blueValEl.value||'0.25');
+  const labelPct = (parseInt(labelPctEl.value||'3',10))/100;  // label band height as % of H
+  const phonePct = (parseInt(phonePctEl.value||'70',10))/100; // phone band height as % of row height
+
+  const small = downscale(currentImage, 1100);
   const ctx = small.getContext('2d');
   const {data,width:W,height:H} = ctx.getImageData(0,0,small.width,small.height);
 
-  // 1) Find 5 blue lines (HSV-based per-row score, with smoothing + NMS)
-  const sMin=parseFloat(blueSatEl.value||'0.35');
-  const vMin=parseFloat(blueValEl.value||'0.25');
-  const yBars = await findFiveBlueLines(small, sMin, vMin);
-  if(yBars.length!==5){ alert('Could not find 5 blue bars. Try adjusting S/V sliders or take a flatter photo.'); return; }
-  yBlueList = yBars.map(y=>y/H); blueListEl.textContent = yBars.map(y=>y.toFixed(0)).join(', ');
-  
-  // 2) Detect vertical channels via horizontal gradient projection
-  const colEnergy=new Float32Array(W);
-  for(let x=1; x<W-1; x++){
-    let s=0; for(let y=0;y<H;y++){
-      const il=(y*W + (x-1))*4, ir=(y*W + (x+1))*4;
-      const yl=0.299*data[il] + 0.587*data[il+1] + 0.114*data[il+2];
-      const yr=0.299*data[ir] + 0.587*data[ir+1] + 0.114*data[ir+2];
-      s+=Math.abs(yr-yl);
-    } colEnergy[x]=s;
+  // 1) find 5 blue horizontal bars
+  const yBars = await findFiveBlueLines(small, sMin, vMin); // returns 5 y positions
+  if(yBars.length!==5){ alert('Could not find 5 blue bars. Adjust S/V sliders or retake photo straighter.'); return; }
+  blueListEl.textContent = yBars.map(y=>y.toFixed(0)).join(', ');
+
+  // estimate row height from gaps between bars
+  const gaps=[]; for(let i=1;i<yBars.length;i++) gaps.push(yBars[i]-yBars[i-1]);
+  const rowH = median(gaps);
+
+  // 2) per row: find 12 blue number pads by column projection in a thin band around each bar
+  const xCentersByRow=[]; // array of arrays length 12
+  const bandHalf = Math.max(3, Math.round((labelPct*H)/2));
+  for(const y of yBars){
+    const centers = find12CentersInBand({data,W,H}, y, bandHalf, sMin, vMin);
+    if(centers.length!==12){
+      // retry with slightly wider band and looser thresholds
+      const centers2 = find12CentersInBand({data,W,H}, y, Math.round(bandHalf*1.6), Math.max(0.2,sMin-0.1), Math.max(0.18,vMin-0.07));
+      if(centers2.length!==12){ alert('Could not find 12 blue pads on one of the rows. Try again with sliders.'); return; }
+      xCentersByRow.push(centers2);
+    } else { xCentersByRow.push(centers); }
   }
-  const xBounds = pickPeaks(colEnergy, 13, Math.round(W/18));
-  if(xBounds[0]>5) xBounds.unshift(0);
-  if(xBounds[xBounds.length-1]<W-5) xBounds.push(W-1);
 
-  // 3) Build horizontal boundaries: y0 (top) + the 5 blue lines
-  const diffs = []; for(let i=1;i<yBars.length;i++) diffs.push(yBars[i]-yBars[i-1]);
-  const rowH = median(diffs); // estimated row height
-  const topY = Math.max(0, Math.round(yBars[0] - rowH)); // top boundary above first row
-  const yBounds = [topY, ...yBars]; // 6 boundaries for 5 rows
+  // 3) merge across rows → global 12 centers via median of each index
+  const centersGlobal=[];
+  for(let k=0;k<12;k++){
+    const vals = xCentersByRow.map(row=>row[k]).sort((a,b)=>a-b);
+    centersGlobal.push(vals[Math.floor(vals.length/2)]);
+  }
 
-  // 4) Build ROIs (normalized to original image)
-  const rois=[]; for(let r=0;r<5;r++){
-    const y0=yBounds[r], y1=yBounds[r+1];
+  // 4) convert centers → 13 boundaries (midpoints), with edges extrapolated
+  const xBounds=[ ];
+  for(let k=0;k<11;k++){
+    const mid=(centersGlobal[k]+centersGlobal[k+1])/2; xBounds.push(mid);
+  }
+  // left edge and right edge:
+  const left = Math.max(0, Math.round(centersGlobal[0] - (xBounds[0]-centersGlobal[0])));
+  const right= Math.min(W-1, Math.round(centersGlobal[11] + (centersGlobal[11]-xBounds[9])));
+  xBounds.unshift(left); xBounds.push(right); // now length 13
+
+  // 5) Build label ROIs (thin bands ON blue bars) and detection ROIs (above bars)
+  const roisLabel=[], roisDetect=[];
+  const labelH = Math.max(6, Math.round(labelPct*H)); // thin visual overlay
+  const detectH = Math.max(10, Math.round(phonePct*rowH)); // band above label used for phone detection
+  const detectGap = Math.round(0.04*rowH); // small gap above label
+
+  for(let r=0;r<5;r++){
+    const yLabel0 = Math.max(0, yBars[r] - Math.floor(labelH/2));
+    const yLabel1 = Math.min(H-1, yLabel0 + labelH);
+    const yDet1 = Math.max(0, yBars[r] - detectGap);        // bottom of detection band (just above label)
+    const yDet0 = Math.max(0, yDet1 - detectH);             // top of detection band
+
     for(let c=0;c<12;c++){
       const x0=xBounds[c], x1=xBounds[c+1];
-      rois.push({ x:x0/W, y:y0/H, w:(x1-x0)/W, h:(y1-y0)/H });
+      // label ROI (thin)
+      roisLabel.push({x:x0/W, y:yLabel0/H, w:(x1-x0)/W, h:(yLabel1-yLabel0)/H});
+      // detection ROI (thicker above blue)
+      roisDetect.push({x:x0/W, y:yDet0/H, w:(x1-x0)/W, h:(yDet1-yDet0)/H});
     }
   }
-  boxConfig[box]={rois}; localStorage.setItem('phonebox_config',JSON.stringify(boxConfig));
-  statusEl.textContent='Auto-calibration complete.'; drawOverlay();
+
+  // save
+  boxConfig[box] = { roisLabel, roisDetect };
+  localStorage.setItem('phonebox_config', JSON.stringify(boxConfig));
+  statusEl.textContent='Auto-calibration complete (locked to blue pads).';
+  drawOverlay();
 });
 
-/* ---------- Blue bars helpers ---------- */
+// Fallback manual grid (not used for blue-row alignment, but kept for emergencies)
+document.getElementById('calibrateBtn').addEventListener('click',()=>{
+  const box=document.getElementById('boxSelect').value||'AUTO';
+  if(!currentImage) return alert('Take or upload a photo first.');
+  const roisLabel=[], roisDetect=[]; const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
+  const padX=0.08*W, padY=0.10*H; const gridW=W-2*padX, gridH=H-2*padY;
+  const cellW=gridW/12, cellH=gridH/5;
+  for(let r=0;r<5;r++) for(let c=0;c<12;c++){
+    const lx=(padX+c*cellW)/W, ly=(padY + (r+0.9)*cellH)/H, lw=cellW/W, lh=(0.1*cellH)/H; // thin label strip near bottom
+    roisLabel.push({x:lx,y:ly,w:lw,h:lh});
+    const dy=(padY+r*cellH)/H, dh=(0.8*cellH)/H;
+    roisDetect.push({x:lx,y:dy,w:lw,h:dh});
+  }
+  boxConfig[box]={roisLabel, roisDetect}; localStorage.setItem('phonebox_config',JSON.stringify(boxConfig));
+  alert('Manual grid saved. Use Auto-calibrate for precise blue-pad alignment.');
+  drawOverlay();
+});
+
+/* ---------- Blue detection helpers ---------- */
 function downscale(img, maxW=900){
   const r=Math.min(1,maxW/img.naturalWidth);
   const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r);
@@ -340,8 +370,7 @@ function smooth1D(arr, w=5){
 }
 function pickPeaks(series, count, minDist){
   const idx=[...series].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]);
-  const sel=[];
-  for(const [,i] of idx){ if(sel.every(j=>Math.abs(j-i)>minDist)) sel.push(i); if(sel.length>=count) break; }
+  const sel=[]; for(const [,i] of idx){ if(sel.every(j=>Math.abs(j-i)>minDist)) sel.push(i); if(sel.length>=count) break; }
   return sel.sort((a,b)=>a-b);
 }
 function median(a){ const b=[...a].sort((x,y)=>x-y); const m=Math.floor(b.length/2); return b.length%2?b[m]:(b[m-1]+b[m])/2; }
@@ -350,44 +379,71 @@ async function findFiveBlueLines(canvas, sMin=0.35, vMin=0.25){
   const ctx=canvas.getContext('2d');
   const {data,width:W,height:H} = ctx.getImageData(0,0,canvas.width,canvas.height);
   const score=new Float32Array(H);
-  const x0=Math.round(W*0.08), x1=Math.round(W*0.92); // ignore edges
-
-  // Per-row blue score (HSV mask)
+  const x0=Math.round(W*0.08), x1=Math.round(W*0.92); // ignore extreme edges
   for(let y=0; y<H; y++){
     let sc=0;
     for(let x=x0; x<x1; x+=2){
-      const i=(y*W+x)*4;
-      const r=data[i], g=data[i+1], b=data[i+2];
+      const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2];
       const {h,s,v}=rgb2hsv(r,g,b);
-      // blue hue window ~ 190-255 (tweak)
       const isBlue = (h>190 && h<255) && s>=sMin && v>=vMin;
       if(isBlue) sc++;
     }
     score[y]=sc;
   }
-
-  // Smooth & pick 5 peaks with distance constraint (roughly evenly spaced)
   const smooth = smooth1D(score, 6);
-  const peaks  = pickPeaks(smooth, 5, Math.round(H/8));
-
-  // If fewer than 5, relax thresholds slightly and retry once
+  let peaks  = pickPeaks(smooth, 5, Math.round(H/8));
   if(peaks.length<5){
+    // relax thresholds once
     for(let y=0; y<H; y++){
       let sc=0;
       for(let x=x0; x<x1; x+=2){
-        const i=(y*W+x)*4;
-        const r=data[i], g=data[i+1], b=data[i+2];
+        const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2];
         const {h,s,v}=rgb2hsv(r,g,b);
-        const isBlue = (h>185 && h<260) && s>=Math.max(0.2, sMin-0.1) && v>=Math.max(0.18, vMin-0.07);
+        const isBlue = (h>185 && h<260) && s>=Math.max(0.2,sMin-0.1) && v>=Math.max(0.18,vMin-0.07);
         if(isBlue) sc++;
-      }
-      score[y]=sc;
+      } score[y]=sc;
     }
-    const smooth2 = smooth1D(score, 8);
-    const peaks2  = pickPeaks(smooth2, 5, Math.round(H/9));
-    return peaks2;
+    peaks = pickPeaks(smooth1D(score,8), 5, Math.round(H/9));
   }
   return peaks;
+}
+
+// Column centers for 12 blue pads in a narrow band around y
+function find12CentersInBand(img, yCenter, bandHalf, sMin, vMin){
+  const {data,W,H} = img;
+  const y0=Math.max(0, yCenter-bandHalf), y1=Math.min(H-1, yCenter+bandHalf);
+  const x0=Math.round(W*0.05), x1=Math.round(W*0.95);
+  const col=new Float32Array(W).fill(0);
+  for(let x=x0; x<x1; x++){
+    let sc=0;
+    for(let y=y0; y<=y1; y++){
+      const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2];
+      const {h,s,v}=rgb2hsv(r,g,b);
+      const isBlue = (h>190 && h<255) && s>=sMin && v>=vMin;
+      if(isBlue) sc++;
+    }
+    col[x]=sc;
+  }
+  const smooth = smooth1D(col, 6);
+  let peaks  = pickPeaks(smooth, 12, Math.round(W/16));
+  if(peaks.length>12){
+    // choose 12 best-separated left-to-right by keeping top scores but enforcing order
+    peaks = peaks.slice(0,12).sort((a,b)=>a-b);
+  }
+  if(peaks.length<12){
+    // slight relax: larger window
+    const smooth2=smooth1D(col, 10);
+    peaks=pickPeaks(smooth2, 12, Math.round(W/18));
+  }
+  if(peaks.length!==12) return [];
+  // refine each center with local centroid in ±3 px window
+  const refined = peaks.map(px=>{
+    const left=Math.max(x0, px-3), right=Math.min(x1, px+3);
+    let s=0, w=0;
+    for(let x=left; x<=right; x++){ s += x*col[x]; w += col[x]; }
+    return w>0? s/w : px;
+  });
+  return refined.sort((a,b)=>a-b);
 }
 
 /* ---------- Embeddings + occupied/empty ---------- */
@@ -403,7 +459,7 @@ function cosSim(a,b){ let dot=0,na=0,nb=0; for(let i=0;i<a.length;i++){ dot+=a[i
 
 function slotOccupied(canvas){
   const ctx=canvas.getContext('2d');
-  // sample central band to avoid blue strip & rails
+  // sample central band (avoid blue strip; our detection ROIs are already above it)
   const sx=Math.round(canvas.width*0.15), sy=Math.round(canvas.height*0.15);
   const sw=Math.round(canvas.width*0.70), sh=Math.round(canvas.height*0.60);
   const {data}=ctx.getImageData(sx,sy,sw,sh);
@@ -429,12 +485,12 @@ async function analyze(){
   drawGrid(namesBySlot);
 
   if(!currentImage) return alert('Please take or upload a photo.');
-  const cfg=boxConfig[boxSel||'AUTO']; if(!cfg) return alert('Please calibrate first.');
+  const cfg=boxConfig[boxSel||'AUTO']; if(!cfg || !cfg.roisDetect) return alert('Please Auto-calibrate first.');
 
   statusEl.textContent='Computing…';
   const db=loadDB(); const records=[];
-  for(let i=0;i<cfg.rois.length;i++){
-    const roi=cfg.rois[i];
+  for(let i=0;i<cfg.roisDetect.length; i++){
+    const roi=cfg.roisDetect[i];
     const canvas=cropToCanvas(currentImage, roi);
     const occupied=slotOccupied(canvas);
     const slot=i+1; const expectedName=namesBySlot[slot]||'';
@@ -470,27 +526,12 @@ async function analyze(){
     tr.innerHTML=`<td>${r.slot}</td><td>${r.expectedName||''}</td><td>${r.detectedId||''}</td><td><span class="pill">${r.status}</span></td>`;
     resultsBody.appendChild(tr);
   }
-  lastRecords = records.map(r=>r); drawOverlay();
+  lastRecords = records.map(r=>r);
+  drawOverlay();
   statusEl.textContent='Done.';
 }
 
-async function saveEmbeddings(){
-  if(!currentImage) return alert('Take/upload a photo first.');
-  roster=await loadRoster();
-  const boxSel=document.getElementById('boxSelect').value;
-  const cfg=boxConfig[boxSel||'AUTO']; if(!cfg) return alert('Calibrate first.');
-  const namesBySlot=rosterByBox(boxSel);
-  const db=loadDB();
-
-  for(let i=0;i<cfg.rois.length;i++){
-    const slot=i+1; const name=namesBySlot[slot]; if(!name) continue;
-    const canvas=cropToCanvas(currentImage, cfg.rois[i]);
-    const emb=await embedCanvas(canvas); db[name]=emb;
-  }
-  saveDB(db); alert('Saved embeddings for the visible phones in this photo.');
-}
-
-/* ---------- OCR box auto-detect ---------- */
+/* ---------- OCR box auto-detect (optional) ---------- */
 async function autoDetectBox(){
   if(!currentImage) return;
   statusEl.textContent='Reading labels (OCR)…';
@@ -506,7 +547,22 @@ async function autoDetectBox(){
 
 /* ---------- Wire up ---------- */
 document.getElementById('analyzeBtn').addEventListener('click', analyze);
-document.getElementById('saveEmbeddingBtn').addEventListener('click', saveEmbeddings);
+document.getElementById('saveEmbeddingBtn').addEventListener('click', async ()=>{
+  if(!currentImage) return alert('Take/upload a photo first.');
+  roster=await loadRoster();
+  const boxSel=document.getElementById('boxSelect').value;
+  const cfg=boxConfig[boxSel||'AUTO']; if(!cfg || !cfg.roisDetect) return alert('Calibrate first.');
+  const namesBySlot=rosterByBox(boxSel);
+  const db=loadDB();
+
+  for(let i=0;i<cfg.roisDetect.length;i++){
+    const slot=i+1; const name=namesBySlot[slot]; if(!name) continue;
+    const canvas=cropToCanvas(currentImage, cfg.roisDetect[i]);
+    const emb=await embedCanvas(canvas); db[name]=emb;
+  }
+  saveDB(db); alert('Saved embeddings for the visible phones in this photo.');
+});
+
 document.getElementById('boxSelect').addEventListener('change', async ()=>{
   roster=await loadRoster(); const id=document.getElementById('boxSelect').value; drawGrid(rosterByBox(id)); drawOverlay();
 });
