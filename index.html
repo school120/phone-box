@@ -95,9 +95,9 @@
           <label>Calibration</label>
           <div style="display:flex; gap:8px; flex-wrap:wrap">
             <button id="calibrateBtn">Manual 12×5 grid (fallback)</button>
-            <button id="autoBlueBtn" class="primary">Auto-calibrate (align to blue labels)</button>
+            <button id="autoBlueBtn" class="primary">Auto-calibrate (5 blue bars)</button>
           </div>
-          <small>Anchors the grid to the blue number strip and detects vertical channels.</small>
+          <small>Anchors rows to the 5 blue number bars; detects 12 vertical channels.</small>
         </div>
       </div>
 
@@ -126,9 +126,7 @@
             <label>Top margin (%)
               <input id="topPct" type="range" min="0" max="25" step="1" value="10">
             </label>
-            <div style="font-size:12px;color:var(--muted)">Tip: <b>Tap the preview</b> to set the blue baseline (y) manually if auto-detect misses.</div>
-            <div>Blue baseline y: <span id="yBlueLabel">—</span></div>
-            <button id="rebuildFromBlue">Rebuild slots from current blue baseline</button>
+            <div style="font-size:12px;color:var(--muted)">Detected blue bars y: <span id="blueList">—</span></div>
           </div>
         </details>
       </div>
@@ -157,10 +155,10 @@ const statusEl=document.getElementById('status'), resultsBody=document.getElemen
 const rosterChoice=document.getElementById('rosterChoice'), rosterUpload=document.getElementById('rosterUpload');
 const boxGrid=document.getElementById('boxGrid'), toggleOverlay=document.getElementById('toggleOverlay');
 const blueSatEl=document.getElementById('blueSat'), blueValEl=document.getElementById('blueVal'), topPctEl=document.getElementById('topPct');
-const yBlueLabel=document.getElementById('yBlueLabel'), rebuildBtn=document.getElementById('rebuildFromBlue');
+const blueListEl=document.getElementById('blueList');
 
 let roster=[], boxConfig={}, mobilenetModel=null, currentImage=null, lastRecords=null;
-let yBlueNorm = null; // y position of blue strip in normalized (0..1, image space)
+let yBlueList = []; // array of 5 normalized y positions (0..1)
 
 /* ---------- Roster ---------- */
 async function loadRoster(){
@@ -201,7 +199,6 @@ photoInput.addEventListener('change',()=>{
   const url=URL.createObjectURL(f);
   const img=new Image();
   img.onload=()=>{
-    // downscale for speed if very large
     const scaled = toMaxSize(img, 1600);
     preview.innerHTML=''; preview.appendChild(scaled); preview.appendChild(overlay);
     currentImage=scaled; resizeOverlay(); setTimeout(autoDetectBox, 300);
@@ -236,11 +233,13 @@ function drawOverlay(){
 
   const scaleX=overlay.width/currentImage.naturalWidth, scaleY=overlay.height/currentImage.naturalHeight;
 
-  // draw blue baseline if set
-  if(yBlueNorm!=null){
+  // draw 5 blue baselines if detected
+  if(yBlueList.length===5){
     ctx.strokeStyle='#3aa0ff'; ctx.lineWidth=2;
-    const y=yBlueNorm*currentImage.naturalHeight*scaleY;
-    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(overlay.width,y); ctx.stroke();
+    yBlueList.forEach(yN=>{
+      const y=yN*currentImage.naturalHeight*scaleY;
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(overlay.width,y); ctx.stroke();
+    });
   }
 
   cfg.rois.forEach((roi,i)=>{
@@ -254,19 +253,6 @@ function drawOverlay(){
     ctx.strokeRect(x,y,w,h);
   });
 }
-
-/* Tap to set blue baseline (normalized y) */
-preview.addEventListener('click', (e)=>{
-  if(!currentImage) return;
-  const img=preview.querySelector('img'); if(!img) return;
-  const rect=preview.getBoundingClientRect();
-  const yClient=e.clientY - rect.top;
-  const yNormCanvas = yClient / overlay.height;
-  // Map canvas y to original image y
-  yBlueNorm = yNormCanvas; // because overlay is scaled to image aspect
-  yBlueLabel.textContent = yBlueNorm.toFixed(3);
-  drawOverlay();
-});
 
 /* ---------- Calibration ---------- */
 // Fallback: simple normalized 12×5 grid
@@ -284,22 +270,24 @@ document.getElementById('calibrateBtn').addEventListener('click',()=>{
   drawOverlay();
 });
 
-// Auto-calibration aligned to blue labels + vertical channels
+// Auto-calibration using 5 blue bars + vertical channels
 document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
   if(!currentImage) return alert('Take or upload a photo first.');
   const box=document.getElementById('boxSelect').value||'AUTO';
-  statusEl.textContent='Auto-calibrating (blue labels)…';
+  statusEl.textContent='Auto-calibrating (5 blue bars)…';
 
   const small = downscale(currentImage, 1000);
-  const {data,width:W,height:H} = small.getContext('2d').getImageData(0,0,small.width,small.height);
+  const ctx = small.getContext('2d');
+  const {data,width:W,height:H} = ctx.getImageData(0,0,small.width,small.height);
 
-  // 1) Find y of the blue number strip (HSV in bottom half)
+  // 1) Find 5 blue lines (HSV-based per-row score, with smoothing + NMS)
   const sMin=parseFloat(blueSatEl.value||'0.35');
   const vMin=parseFloat(blueValEl.value||'0.25');
-  const yBlue = (await findBlueBaseline(small, sMin, vMin)) ?? Math.floor(H*0.85);
-  yBlueNorm = yBlue / H; yBlueLabel.textContent = (yBlueNorm).toFixed(3);
-
-  // 2) Detect vertical channels via simple horizontal gradient projection
+  const yBars = await findFiveBlueLines(small, sMin, vMin);
+  if(yBars.length!==5){ alert('Could not find 5 blue bars. Try adjusting S/V sliders or take a flatter photo.'); return; }
+  yBlueList = yBars.map(y=>y/H); blueListEl.textContent = yBars.map(y=>y.toFixed(0)).join(', ');
+  
+  // 2) Detect vertical channels via horizontal gradient projection
   const colEnergy=new Float32Array(W);
   for(let x=1; x<W-1; x++){
     let s=0; for(let y=0;y<H;y++){
@@ -309,69 +297,29 @@ document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
       s+=Math.abs(yr-yl);
     } colEnergy[x]=s;
   }
-  const verts = pickPeaks(colEnergy, 13, Math.round(W/18));
-  if(verts[0]>5) verts.unshift(0);
-  if(verts[verts.length-1]<W-5) verts.push(W-1);
+  const xBounds = pickPeaks(colEnergy, 13, Math.round(W/18));
+  if(xBounds[0]>5) xBounds.unshift(0);
+  if(xBounds[xBounds.length-1]<W-5) xBounds.push(W-1);
 
-  // 3) Horizontal bounds: from top margin down to yBlue in 5 even bands
-  const topPct = parseInt(topPctEl.value||'10',10);
-  const topY = Math.round(H*(topPct/100));
-  const yBounds=[]; for(let k=0;k<=5;k++) yBounds.push(Math.round(topY + (yBlue-topY)*k/5));
+  // 3) Build horizontal boundaries: y0 (top) + the 5 blue lines
+  const diffs = []; for(let i=1;i<yBars.length;i++) diffs.push(yBars[i]-yBars[i-1]);
+  const rowH = median(diffs); // estimated row height
+  const topY = Math.max(0, Math.round(yBars[0] - rowH)); // top boundary above first row
+  const yBounds = [topY, ...yBars]; // 6 boundaries for 5 rows
 
   // 4) Build ROIs (normalized to original image)
   const rois=[]; for(let r=0;r<5;r++){
     const y0=yBounds[r], y1=yBounds[r+1];
     for(let c=0;c<12;c++){
-      const x0=verts[c], x1=verts[c+1];
+      const x0=xBounds[c], x1=xBounds[c+1];
       rois.push({ x:x0/W, y:y0/H, w:(x1-x0)/W, h:(y1-y0)/H });
     }
   }
   boxConfig[box]={rois}; localStorage.setItem('phonebox_config',JSON.stringify(boxConfig));
-  statusEl.textContent='Auto-calibration complete.';
-  drawOverlay();
+  statusEl.textContent='Auto-calibration complete.'; drawOverlay();
 });
 
-// Rebuild from current yBlue (after tapping)
-rebuildBtn.addEventListener('click', ()=>{
-  if(!currentImage) return alert('Load a photo first.');
-  const box=document.getElementById('boxSelect').value||'AUTO';
-  const cfg=boxConfig[box]||boxConfig['AUTO'];
-  if(!cfg || yBlueNorm==null) return alert('Calibrate once and set blue baseline first.');
-  const H = currentImage.naturalHeight, W = currentImage.naturalWidth;
-  const yBlue = yBlueNorm*H;
-  const topPct = parseInt(topPctEl.value||'10',10);
-  const topY = Math.round(H*(topPct/100));
-
-  // derive x boundaries from existing cfg if present; otherwise uniform
-  let xBounds = [];
-  if(cfg.rois?.length===60){
-    const xs = [];
-    for(let c=0;c<=12;c++){
-      const idx = Math.min(c*1, 11); // safeguard
-      const r0 = cfg.rois[idx]; // first row’s column c
-      const x = r0 ? r0.x*W : Math.round(c*W/12);
-      xs.push(x);
-    }
-    // ensure sorted and within [0,W]
-    xBounds = xs.sort((a,b)=>a-b).map(v=>Math.max(0,Math.min(W-1,v)));
-    if(xBounds.length<13){ xBounds = Array.from({length:13}, (_,i)=>Math.round(i*W/12)); }
-  } else {
-    xBounds = Array.from({length:13}, (_,i)=>Math.round(i*W/12));
-  }
-
-  const yBounds=[]; for(let k=0;k<=5;k++) yBounds.push(Math.round(topY + (yBlue-topY)*k/5));
-  const rois=[];
-  for(let r=0;r<5;r++){
-    for(let c=0;c<12;c++){
-      const x0=xBounds[c], x1=xBounds[c+1], y0=yBounds[r], y1=yBounds[r+1];
-      rois.push({x:x0/W, y:y0/H, w:(x1-x0)/W, h:(y1-y0)/H});
-    }
-  }
-  boxConfig[box]={rois}; localStorage.setItem('phonebox_config',JSON.stringify(boxConfig));
-  drawOverlay();
-});
-
-/* ---------- Helpers for blue baseline ---------- */
+/* ---------- Blue bars helpers ---------- */
 function downscale(img, maxW=900){
   const r=Math.min(1,maxW/img.naturalWidth);
   const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r);
@@ -379,40 +327,67 @@ function downscale(img, maxW=900){
 }
 function rgb2hsv(r,g,b){
   r/=255; g/=255; b/=255;
-  const max=Math.max(r,g,b), min=Math.min(r,g,b);
-  const d=max-min;
-  let h=0; if(d!==0){
-    if(max===r) h=((g-b)/d)%6;
-    else if(max===g) h=(b-r)/d+2;
-    else h=(r-g)/d+4;
-    h*=60; if(h<0) h+=360;
-  }
-  const s=max===0?0:d/max, v=max;
-  return {h,s,v};
+  const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
+  let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; }
+  const s=max===0?0:d/max, v=max; return {h,s,v};
 }
-async function findBlueBaseline(canvas, sMin=0.35, vMin=0.25){
-  const ctx=canvas.getContext('2d');
-  const {data,width:W,height:H} = ctx.getImageData(0,0,canvas.width,canvas.height);
-  let bestY=-1, bestScore=-1;
-  // scan bottom half only
-  for(let y=Math.floor(H*0.5); y<H; y++){
-    let score=0;
-    for(let x=0; x<W; x+=2){
-      const i=(y*W + x)*4;
-      const r=data[i], g=data[i+1], b=data[i+2];
-      const {h,s,v}=rgb2hsv(r,g,b);
-      const isBlue = (h>180 && h<260) && s>=sMin && v>=vMin;
-      if(isBlue) score++;
-    }
-    if(score>bestScore){ bestScore=score; bestY=y; }
-  }
-  return bestScore>0 ? bestY : null;
+function smooth1D(arr, w=5){
+  const out=new Float32Array(arr.length);
+  for(let i=0;i<arr.length;i++){
+    let s=0,c=0; for(let k=-w;k<=w;k++){ const j=i+k; if(j<0||j>=arr.length) continue; s+=arr[j]; c++; }
+    out[i]=s/c;
+  } return out;
 }
 function pickPeaks(series, count, minDist){
   const idx=[...series].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]);
   const sel=[];
   for(const [,i] of idx){ if(sel.every(j=>Math.abs(j-i)>minDist)) sel.push(i); if(sel.length>=count) break; }
   return sel.sort((a,b)=>a-b);
+}
+function median(a){ const b=[...a].sort((x,y)=>x-y); const m=Math.floor(b.length/2); return b.length%2?b[m]:(b[m-1]+b[m])/2; }
+
+async function findFiveBlueLines(canvas, sMin=0.35, vMin=0.25){
+  const ctx=canvas.getContext('2d');
+  const {data,width:W,height:H} = ctx.getImageData(0,0,canvas.width,canvas.height);
+  const score=new Float32Array(H);
+  const x0=Math.round(W*0.08), x1=Math.round(W*0.92); // ignore edges
+
+  // Per-row blue score (HSV mask)
+  for(let y=0; y<H; y++){
+    let sc=0;
+    for(let x=x0; x<x1; x+=2){
+      const i=(y*W+x)*4;
+      const r=data[i], g=data[i+1], b=data[i+2];
+      const {h,s,v}=rgb2hsv(r,g,b);
+      // blue hue window ~ 190-255 (tweak)
+      const isBlue = (h>190 && h<255) && s>=sMin && v>=vMin;
+      if(isBlue) sc++;
+    }
+    score[y]=sc;
+  }
+
+  // Smooth & pick 5 peaks with distance constraint (roughly evenly spaced)
+  const smooth = smooth1D(score, 6);
+  const peaks  = pickPeaks(smooth, 5, Math.round(H/8));
+
+  // If fewer than 5, relax thresholds slightly and retry once
+  if(peaks.length<5){
+    for(let y=0; y<H; y++){
+      let sc=0;
+      for(let x=x0; x<x1; x+=2){
+        const i=(y*W+x)*4;
+        const r=data[i], g=data[i+1], b=data[i+2];
+        const {h,s,v}=rgb2hsv(r,g,b);
+        const isBlue = (h>185 && h<260) && s>=Math.max(0.2, sMin-0.1) && v>=Math.max(0.18, vMin-0.07);
+        if(isBlue) sc++;
+      }
+      score[y]=sc;
+    }
+    const smooth2 = smooth1D(score, 8);
+    const peaks2  = pickPeaks(smooth2, 5, Math.round(H/9));
+    return peaks2;
+  }
+  return peaks;
 }
 
 /* ---------- Embeddings + occupied/empty ---------- */
