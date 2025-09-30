@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Phone Box Attendance — Simple Grid (1–60)</title>
+<title>Phone Box Attendance — Precise Blue-Bar Alignment</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
@@ -12,7 +12,7 @@
 <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1"></script>
 <style>
-  :root { --bg:#0b1020; --card:#121833; --muted:#8ea0d0; --accent:#6cc; }
+  :root { --bg:#0b1020; --card:#121833; --muted:#8ea0d0; --accent:#3ad0ff; }
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;background:var(--bg);color:#fff}
@@ -55,7 +55,7 @@
 <body>
 <header>
   <div style="font-weight:800">📱 Phone Box Attendance</div>
-  <div class="badge">Simple grid • 12×5 above blue bars</div>
+  <div class="badge">Precise blue-bar anchoring • 12×5</div>
 </header>
 <main>
   <div class="wrap">
@@ -88,10 +88,10 @@
         <div>
           <label>Calibration</label>
           <div style="display:flex; gap:8px; flex-wrap:wrap">
-            <button id="autoBtn" class="primary">Auto-calibrate (5 blue bars)</button>
-            <button id="forceGridBtn">Show simple grid now</button>
+            <button id="autoBtn" class="primary">Auto-calibrate (precise)</button>
+            <button id="forceGridBtn">Show simple grid</button>
           </div>
-          <small>Rectangles sit directly <b>above</b> the blue number bars. 12 columns are spread evenly across the width.</small>
+          <small>The cyan line is the <b>top edge</b> of each blue number strip. Rectangles sit <b>directly above</b> that line.</small>
         </div>
       </div>
 
@@ -127,12 +127,12 @@
               <input id="blueVal" type="range" min="0" max="1" step="0.01" value="0.25">
             </label>
             <label>Ignore X edges (% of width)
-              <input id="edgeCropPct" type="range" min="0" max="12" step="1" value="5">
+              <input id="edgeCropPct" type="range" min="0" max="15" step="1" value="5">
             </label>
-            <label>Phone band height (% of row height)
+            <label>Phone band height (% of row gap)
               <input id="phonePct" type="range" min="30" max="100" step="5" value="70">
             </label>
-            <div style="font-size:12px;color:var(--muted)">Blue bars y: <span id="blueList">—</span></div>
+            <div style="font-size:12px;color:var(--muted)">Blue bar tops y: <span id="blueList">—</span></div>
           </div>
         </details>
       </div>
@@ -166,7 +166,7 @@ const edgeCropPctEl=document.getElementById('edgeCropPct'), phonePctEl=document.
 const blueListEl=document.getElementById('blueList');
 
 let roster=[], boxConfig={}, mobilenetModel=null, currentImage=null, lastRecords=null;
-let debugMeta=null; // { yBars, xBounds }
+let guides=null; // {tops[], centers[], bounds[]}
 
 /* ---------- Roster ---------- */
 async function loadRoster(){
@@ -209,8 +209,7 @@ photoInput.addEventListener('change',()=>{
     const scaled = toMaxSize(img, 1600);
     preview.innerHTML=''; preview.appendChild(scaled); preview.appendChild(overlay);
     currentImage=scaled; resizeOverlay();
-    // show a simple grid immediately
-    forceSimpleGrid();
+    forceSimpleGrid(); // show something immediately
     setTimeout(autoDetectBox, 200);
   };
   img.src=url;
@@ -241,12 +240,13 @@ function drawOverlay(){
   const cfg=boxConfig[document.getElementById('boxSelect').value||'AUTO']; if(!cfg) return;
   const scaleX=overlay.width/currentImage.naturalWidth, scaleY=overlay.height/currentImage.naturalHeight;
 
-  if(toggleGuides.checked && debugMeta && debugMeta.yBars){
-    ctx.strokeStyle='#3aa0ff'; ctx.lineWidth=2;
-    debugMeta.yBars.forEach(y=>{ const yy=y*scaleY; ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(overlay.width,yy); ctx.stroke(); });
-    if(debugMeta.xBounds){
-      ctx.strokeStyle='#ffd63a'; ctx.lineWidth=1.5;
-      debugMeta.xBounds.forEach(x=>{ const xx=x*scaleX; ctx.beginPath(); ctx.moveTo(xx,0); ctx.lineTo(xx,overlay.height); ctx.stroke(); });
+  if(toggleGuides.checked && guides){
+    // cyan: precise top-of-blue; yellow: column bounds
+    ctx.strokeStyle=varAccent(); ctx.lineWidth=2;
+    (guides.tops||[]).forEach(y=>{ const yy=y*scaleY; ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(overlay.width,yy); ctx.stroke(); });
+    if(guides.bounds){
+      ctx.strokeStyle='#ffd63a'; ctx.lineWidth=1.25;
+      guides.bounds.forEach(x=>{ const xx=x*scaleX; ctx.beginPath(); ctx.moveTo(xx,0); ctx.lineTo(xx,overlay.height); ctx.stroke(); });
     }
   }
 
@@ -263,109 +263,176 @@ function drawOverlay(){
     });
   }
 }
+function varAccent(){ return getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#3ad0ff'; }
 
-/* ---------- Calibration (simple & reliable) ---------- */
-document.getElementById('autoBtn').addEventListener('click', autoCalibrateSimple);
+/* ---------- Calibration (precise rows + equal columns) ---------- */
+document.getElementById('autoBtn').addEventListener('click', autoCalibratePrecise);
 document.getElementById('forceGridBtn').addEventListener('click', forceSimpleGrid);
 
 function forceSimpleGrid(){
   if(!currentImage) return alert('Take or upload a photo first.');
   const box=document.getElementById('boxSelect').value||'AUTO';
   const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
-  // rows: 5 evenly spaced blue bars near the lower portions (fallback)
-  const yBars = [0.20,0.38,0.56,0.74,0.92].map(p=>Math.round(p*H));
-  const rois = buildROIsFromBarsAndEqualColumns(W,H,yBars);
+  const tops=[0.22,0.40,0.58,0.76,0.94].map(p=>Math.round(p*H)); // rough fallback
+  const bounds = equalBounds(W, edgeCropPct());
+  const rois = buildROIs(tops, bounds, W, H);
   boxConfig[box]={roisDetect:rois};
-  debugMeta={yBars, xBounds: equalBounds(W, edgeCropPct())};
-  statusEl.textContent='Simple grid shown (fallback).';
+  guides={tops, bounds};
+  statusEl.textContent='Simple grid shown.';
   drawOverlay();
 }
 
-async function autoCalibrateSimple(){
+async function autoCalibratePrecise(){
   if(!currentImage) return alert('Take or upload a photo first.');
   const box=document.getElementById('boxSelect').value||'AUTO';
 
-  const hueMin=parseInt(blueHueMinEl.value||'190',10);
-  const hueMax=parseInt(blueHueMaxEl.value||'255',10);
-  const sMin=parseFloat(blueSatEl.value||'0.35');
-  const vMin=parseFloat(blueValEl.value||'0.25');
+  const hueMin=parseInt(blueHueMinEl.value,10);
+  const hueMax=parseInt(blueHueMaxEl.value,10);
+  const sMin=parseFloat(blueSatEl.value);
+  const vMin=parseFloat(blueValEl.value);
 
   const small = downscale(currentImage, 1200);
-  const yBars = await findFiveBlueLines(small, {hueMin,hueMax,sMin,vMin,edgeCrop:edgeCropPct()});
-  if(yBars.length!==5){
+  const {tops} = await findBlueBarsPrecise(small, {hueMin,hueMax,sMin,vMin,edgeCrop:edgeCropPct()});
+
+  if(tops.length!==5){
     forceSimpleGrid();
     alert('Could not reliably find 5 blue bars — showing simple grid instead.');
     return;
   }
-  blueListEl.textContent = yBars.map(y=>y.toFixed(0)).join(', ');
-  const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
+  blueListEl.textContent = tops.map(y=>y.toFixed(0)).join(', ');
 
-  const rois = buildROIsFromBarsAndEqualColumns(W,H,yBars);
+  const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
+  const bounds = equalBounds(W, edgeCropPct());
+  const rois = buildROIs(tops, bounds, W, H);
   boxConfig[box]={roisDetect:rois};
-  debugMeta={yBars, xBounds: equalBounds(W, edgeCropPct())};
-  statusEl.textContent='Calibrated to blue bars. Rectangles are above the numbers.';
+  guides={tops, bounds};
+  statusEl.textContent='Calibrated: rectangles are directly above the blue strips.';
   drawOverlay();
 }
 
-function buildROIsFromBarsAndEqualColumns(W,H,yBars){
-  // 12 equal columns, ignoring left/right edges a bit
-  const bounds = equalBounds(W, edgeCropPct());
-  const cols = boundsToCols(bounds);
-  // detection band height as % of row gap
-  const gaps=[]; for(let i=1;i<yBars.length;i++) gaps.push(yBars[i]-yBars[i-1]);
-  const rowH = gaps.length ? gaps.reduce((a,b)=>a+b,0)/gaps.length : H/5;
-  const detectH = Math.max(10, Math.round(rowH * (parseInt(phonePctEl.value||'70',10)/100)));
+function buildROIs(tops, bounds, W, H){
+  // 12 columns from 13 bounds; add insets so walls/foam aren’t treated as phones
+  const cols=[]; for(let i=0;i<12;i++){ cols.push([bounds[i], bounds[i+1]]); }
+  // detection band height from average row gap
+  const gaps=[]; for(let i=1;i<tops.length;i++) gaps.push(tops[i]-tops[i-1]);
+  const rowGap = gaps.length? gaps.reduce((a,b)=>a+b,0)/gaps.length : H/5;
+  const detectH = Math.max(10, Math.round(rowGap * (parseInt(phonePctEl.value,10)/100)));
+
   const rois=[];
-  for(const y of yBars){
-    const yBottom = Math.max(0,y-1), yTop = Math.max(0, yBottom - detectH);
-    for(const [x0,x1] of cols){
-      // inset 12% inside each column, extra at edges
-      const base=Math.round((x1-x0)*0.12);
-      const extraL = (x0===cols[0][0]) ? Math.round((x1-x0)*0.20) : 0;
-      const extraR = (x1===cols[cols.length-1][1]) ? Math.round((x1-x0)*0.20) : 0;
-      const xa = x0 + Math.max(base,extraL), xb = x1 - Math.max(base,extraR);
+  for(const top of tops){
+    const yBottom = Math.max(0, top);          // bottom = top edge of blue strip
+    const yTop    = Math.max(0, yBottom - detectH);
+    for(let c=0;c<cols.length;c++){
+      const x0=cols[c][0], x1=cols[c][1];
+      const base = Math.round((x1-x0)*0.12);
+      const edgeExtra = (c===0 || c===cols.length-1) ? Math.round((x1-x0)*0.20) : 0;
+      const xa = x0 + Math.max(base, edgeExtra);
+      const xb = x1 - Math.max(base, edgeExtra);
       rois.push({x:xa/W, y:yTop/H, w:(xb-xa)/W, h:(yBottom-yTop)/H});
     }
   }
   return rois;
 }
-function equalBounds(W, edge){ const L=Math.round(W*edge), R=Math.round(W*(1-edge)); const w=R-L+1, step=w/12; const b=[L]; for(let i=1;i<12;i++) b.push(Math.round(L+i*step)); b.push(R); return b; }
-function boundsToCols(b){ const out=[]; for(let i=0;i<12;i++) out.push([b[i], b[i+1]]); return out; }
-function edgeCropPct(){ return (parseInt(edgeCropPctEl.value||'5',10))/100; }
+function equalBounds(W, edge){ // 13 vertical lines, 12 equal slots
+  const L=Math.round(W*edge), R=Math.round(W*(1-edge));
+  const usable=R-L; const step=usable/12;
+  const b=[L]; for(let i=1;i<12;i++) b.push(Math.round(L+i*step)); b.push(R);
+  return b;
+}
+function edgeCropPct(){ return (parseInt(edgeCropPctEl.value,10))/100; }
 
-/* ---------- Blue bar finder ---------- */
-function downscale(img, maxW=900){ const r=Math.min(1,maxW/img.naturalWidth); const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r); c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c; }
-function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
-function smooth1D(arr, w=5){ const out=new Float32Array(arr.length); for(let i=0;i<arr.length;i++){ let s=0,c=0; for(let k=-w;k<=w;k++){ const j=i+k; if(j<0||j>=arr.length) continue; s+=arr[j]; c++; } out[i]=s/c; } return out; }
-function pickPeaks(series, count, minDist){ const idx=[...series].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const sel=[]; for(const [,i] of idx){ if(sel.every(j=>Math.abs(j-i)>minDist)) sel.push(i); if(sel.length>=count) break; } return sel.sort((a,b)=>a-b); }
+/* ---------- Precise blue-bar finder (TOP edges) ---------- */
+function downscale(img, maxW=900){
+  const r=Math.min(1,maxW/img.naturalWidth);
+  const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r);
+  c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c;
+}
+function rgb2hsv(r,g,b){
+  r/=255; g/=255; b/=255;
+  const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min; let h=0;
+  if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; }
+  const s=max===0?0:d/max, v=max; return {h,s,v};
+}
+function smooth1D(arr, w=5){
+  const out=new Float32Array(arr.length);
+  for(let i=0;i<arr.length;i++){ let s=0,c=0; for(let k=-w;k<=w;k++){ const j=i+k; if(j<0||j>=arr.length) continue; s+=arr[j]; c++; } out[i]=s/c; }
+  return out;
+}
+function pickPeaks(series, count, minDist){
+  const idx=[...series].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]);
+  const sel=[]; for(const [,i] of idx){ if(sel.every(j=>Math.abs(j-i)>minDist)) sel.push(i); if(sel.length>=count) break; }
+  return sel.sort((a,b)=>a-b);
+}
+async function findBlueBarsPrecise(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}) {
+  const ctx = canvas.getContext('2d');
+  const { data, width: W, height: H } =
+    ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-async function findFiveBlueLines(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}){
-  const ctx=canvas.getContext('2d'); const {data,width:W,height:H}=ctx.getImageData(0,0,canvas.width,canvas.height);
-  const score=new Float32Array(H); const x0=Math.round(W*edgeCrop), x1=Math.round(W*(1-edgeCrop));
-  for(let y=0; y<H; y++){
-    let sc=0; for(let x=x0; x<x1; x+=2){ const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2]; const {h,s,v}=rgb2hsv(r,g,b); const isBlue=(h>hueMin && h<hueMax)&&s>=sMin&&v>=vMin; if(isBlue) sc++; }
-    score[y]=sc;
-  }
-  let smooth = smooth1D(score, 6);
-  let peaks  = pickPeaks(smooth, 5, Math.round(H/8));
-  if(peaks.length<5){
-    // relax once
-    for(let y=0; y<H; y++){
-      let sc=0; for(let x=x0; x<x1; x+=1){ const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2]; const {h,s,v}=rgb2hsv(r,g,b); const ok=(h>hueMin-5&&h<hueMax+5)&&s>=Math.max(0.2,sMin-0.1)&&v>=Math.max(0.18,vMin-0.07); if(ok) sc++; }
-      score[y]=sc;
+  const x0 = Math.round(W*edgeCrop), x1 = Math.round(W*(1-edgeCrop));
+
+  // per-row "blue fraction" profile
+  const frac = new Float32Array(H);
+  for (let y = 0; y < H; y++) {
+    let cnt = 0, blue = 0;
+    for (let x = x0; x <= x1; x += 2) {
+      const i = (y*W + x)*4;
+      const r = data[i], g = data[i+1], b = data[i+2];
+      const {h,s,v} = rgb2hsv(r,g,b);
+      if ((h>hueMin && h<hueMax) && s>=sMin && v>=vMin) blue++;
+      cnt++;
     }
-    smooth = smooth1D(score, 8);
-    peaks  = pickPeaks(smooth, 5, Math.round(H/9));
+    frac[y] = cnt ? blue/cnt : 0;
   }
-  return peaks;
+  let s = smooth1D(frac, 6);
+
+  // peak rows (centers of the blue bands)
+  let peaks = pickPeaks(s, 5, Math.round(H/8));
+  if (peaks.length < 5) {
+    // relax once
+    for (let y = 0; y < H; y++) {
+      let cnt = 0, blue = 0;
+      for (let x = x0; x <= x1; x += 1) {
+        const i = (y*W + x)*4;
+        const r = data[i], g = data[i+1], b = data[i+2];
+        const {h,s,v} = rgb2hsv(r,g,b);
+        const ok=(h>hueMin-5 && h<hueMax+5) && s>=Math.max(0.2,sMin-0.1) && v>=Math.max(0.18,vMin-0.07);
+        if(ok) blue++;
+        cnt++;
+      }
+      frac[y] = cnt ? blue/cnt : 0;
+    }
+    s = smooth1D(frac, 8);
+    peaks = pickPeaks(s, 5, Math.round(H/9));
+  }
+
+  // refine each peak to TOP and BOTTOM edges of the blue strip
+  const tops=[], centers=[], bottoms=[];
+  const win = Math.round(H*0.035); // ~3.5% of height around each peak
+  for (const p of peaks) {
+    const a = Math.max(0, p - win), b = Math.min(H-1, p + win);
+    let localMax = 0; for (let y=a; y<=b; y++) localMax = Math.max(localMax, s[y]);
+    const T = localMax * 0.50; // 50% of local max — robust
+    let top=p, bottom=p;
+    for (let y=p; y>=a; y--) { if (s[y] >= T) top = y; else break; }
+    for (let y=p; y<=b; y++) { if (s[y] >= T) bottom = y; else break; }
+    tops.push(top);
+    centers.push(Math.round((top+bottom)/2));
+    bottoms.push(bottom);
+  }
+  // Ensure we return 5 lanes sorted top→bottom
+  const order=[...tops.keys()].sort((i,j)=>tops[i]-tops[j]);
+  return {
+    tops: order.map(i=>tops[i]),
+    centers: order.map(i=>centers[i]),
+    bottoms: order.map(i=>bottoms[i])
+  };
 }
 
-/* ---------- Occupancy + embeddings ---------- */
+/* ---------- Embeddings + occupancy ---------- */
 async function ensureModel(){ if(!mobilenetModel) mobilenetModel = await mobilenet.load(); }
 function cropToCanvas(img, roi){ const c=document.createElement('canvas'); const W=img.naturalWidth, H=img.naturalHeight; c.width=Math.round(roi.w*W); c.height=Math.round(roi.h*H); c.getContext('2d').drawImage(img, roi.x*W, roi.y*H, roi.w*W, roi.h*H, 0,0,c.width,c.height); return c; }
 async function embedCanvas(canvas){ await ensureModel(); const logits=mobilenetModel.infer(canvas,true); const emb=await logits.data(); logits.dispose(); return Array.from(emb); }
 function cosSim(a,b){ let dot=0,na=0,nb=0; for(let i=0;i<a.length;i++){ dot+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } return dot/(Math.sqrt(na)*Math.sqrt(nb)+1e-8); }
-
 function slotOccupied(canvas){
   const ctx=canvas.getContext('2d');
   const cx=Math.round(canvas.width*0.20), cw=Math.round(canvas.width*0.60);
@@ -391,7 +458,7 @@ async function analyze(){
   drawGrid(namesBySlot);
 
   if(!currentImage) return alert('Please take or upload a photo.');
-  const cfg=boxConfig[boxSel||'AUTO']; if(!cfg || !cfg.roisDetect) return alert('Press “Auto-calibrate” (or “Show grid”).');
+  const cfg=boxConfig[boxSel||'AUTO']; if(!cfg || !cfg.roisDetect) return alert('Press “Auto-calibrate” (or “Show simple grid”).');
 
   statusEl.textContent='Computing…';
   const db=loadDB(); const records=[];
@@ -428,7 +495,7 @@ async function analyze(){
   statusEl.textContent='Done.';
 }
 
-/* ---------- OCR box auto-detect (optional) ---------- */
+/* ---------- OCR (optional) ---------- */
 async function autoDetectBox(){
   if(!currentImage) return;
   statusEl.textContent='Reading labels (OCR)…';
