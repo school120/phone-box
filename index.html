@@ -2,275 +2,368 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>Phone Box Checker — Projection Detector + Blue Mask Debug</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Phone Box Attendance</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <script defer src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.3/dist/tesseract.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1"></script>
   <style>
-    .card{ background:#fff; border-radius:1rem; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:1rem; }
-    .btn{ padding:.5rem .75rem; border:1px solid #ddd; border-radius:1rem; }
-    .btn-primary{ background:#111827; color:#fff; border-color:#111827; }
-    .overlay-wrap{ position:relative; }
-    .overlay-canvas{ position:absolute; inset:0; pointer-events:none; }
-    .small{ font-size:.85rem; color:#6b7280; }
-    .slider{ width:160px; }
-    .badge{ display:inline-block; padding:.15rem .5rem; border-radius:.5rem; font-size:.75rem; }
+    :root { --bg:#0b1020; --card:#121833; --muted:#8ea0d0; --accent:#6cc; }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;background:var(--bg);color:#fff}
+    header{padding:20px 16px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:12px}
+    .badge{background:rgba(255,255,255,.1);padding:4px 8px;border-radius:999px;font-size:12px}
+    main{max-width:1100px;margin:0 auto;padding:16px;}
+    .wrap{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
+    .card{background:var(--card);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    h2{margin:0 0 12px;font-weight:800}
+    label{display:block;margin:.5rem 0 .35rem;color:var(--muted);font-size:14px}
+    select,input[type="file"],button{width:100%;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:#0e1533;color:#fff}
+    button.primary{background:linear-gradient(180deg,#39bdf2,#1aa1d9);border:none;font-weight:700}
+    small{color:var(--muted)}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    #preview{width:100%;aspect-ratio:3/4;background:#0d1330;border-radius:12px;display:flex;align-items:center;justify-content:center;border:1px dashed rgba(255,255,255,.18);overflow:hidden}
+    #preview>video,#preview>img{width:100%;height:100%;object-fit:cover}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid rgba(255,255,255,.08);padding:8px 6px;text-align:left}
+    tr.mismatch{background:rgba(255,80,80,.12)}
+    tr.ok{opacity:.6}
+    .pill{display:inline-block;padding:.15rem .45rem;border-radius:999px;background:rgba(255,255,255,.12);font-size:12px}
+    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:6px}
+    .slot{background:#0f1738;border:1px solid rgba(255,255,255,.08);aspect-ratio:3/5;border-radius:8px;position:relative}
+    .slot span{position:absolute;inset:auto 6px 6px 6px;font-size:10px;color:var(--muted)}
   </style>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 </head>
-<body class="min-h-screen bg-gray-50 text-gray-900">
-  <div id="root" class="p-4 sm:p-6"></div>
+<body>
+  <header>
+    <div style="font-weight:800">📱 Phone Box Attendance</div>
+    <div class="badge">MVP – client‑only</div>
+  </header>
+  <main>
+    <div class="wrap">
+      <section class="card">
+        <h2>Scan a Box</h2>
+        <div class="row">
+          <div>
+            <label>Choose box</label>
+            <select id="boxSelect">
+              <option value="">Auto‑detect from labels (OCR)</option>
+              <optgroup label="Grade Boxes">
+                <!-- 9–12, A–F -->
+              </optgroup>
+              <optgroup label="Special">
+                <option>SM1</option>
+                <option>SM2</option>
+              </optgroup>
+            </select>
+          </div>
+          <div>
+            <label>Roster CSV</label>
+            <select id="rosterChoice">
+              <option value="./data/roster.csv">Use repo roster (./data/roster.csv)</option>
+              <option value="upload">Upload a different CSV…</option>
+            </select>
+            <input id="rosterUpload" type="file" accept=".csv" style="display:none;margin-top:6px" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>Take/Upload a photo</label>
+            <input id="photo" type="file" accept="image/*" capture="environment" />
+          </div>
+          <div>
+            <label>Calibration</label>
+            <button id="calibrateBtn">Use this photo to calibrate slots</button>
+            <small>Do this once per box. We save normalized 12×5 regions.</small>
+          </div>
+        </div>
+        <div id="preview" style="margin-top:12px"><small>Photo preview appears here</small></div>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button class="primary" id="analyzeBtn">Analyze Attendance</button>
+          <button id="saveEmbeddingBtn">Save Current Embeddings → Roster</button>
+        </div>
+        <small id="status"></small>
+      </section>
+      <section class="card">
+        <h2>Results</h2>
+        <div id="boxGrid" class="grid" style="margin-bottom:10px"></div>
+        <table>
+          <thead>
+            <tr><th>Slot</th><th>Expected</th><th>Detected</th><th>Status</th></tr>
+          </thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </section>
+    </div>
+  </main>
+<script>
+// --- Utility: box ids and positions ---
+const BOX_IDS = [];
+['9','10','11','12'].forEach(grade=>{
+  ['A','B','C','D','E','F'].forEach(letter=>BOX_IDS.push(`${grade}${letter}`));
+});
+const boxOptGroup = document.querySelector('optgroup[label="Grade Boxes"]');
+BOX_IDS.forEach(id=>{ const o=document.createElement('option'); o.value=id; o.textContent=id; boxOptGroup.appendChild(o); });
 
-  <script>
-  const { useEffect, useRef, useState } = React;
+// UI refs
+const photoInput = document.getElementById('photo');
+const preview = document.getElementById('preview');
+const statusEl = document.getElementById('status');
+const resultsBody = document.getElementById('resultsBody');
+const rosterChoice = document.getElementById('rosterChoice');
+const rosterUpload = document.getElementById('rosterUpload');
+const boxGrid = document.getElementById('boxGrid');
 
-  // ========= Utils =========
-  function robustThreshold(values){
-    const a=[...values].sort((x,y)=>x-y); const n=a.length; if(!n) return 0.02;
-    const med=n%2? a[(n-1)/2] : (a[n/2-1]+a[n/2])/2;
-    const ad=a.map(v=>Math.abs(v-med)).sort((x,y)=>x-y);
-    const mad=n%2? ad[(n-1)/2] : (ad[n/2-1]+ad[n/2])/2;
-    let t=med+1.5*mad; if(!isFinite(t)||t<=0) t=med*1.25+0.003; return Math.min(Math.max(t, med*1.05), med+0.05);
+let roster = []; // {Person ID, Full Name, Security Number, Current Grade, Email 1}
+let boxConfig = {}; // { boxId: { rois: [{x,y,w,h} * 60] } }
+let mobilenetModel = null;
+let currentImage = null;
+
+// Build visual 12x5 grid once
+function drawGrid(namesBySlot={}){
+  boxGrid.innerHTML='';
+  for(let r=0;r<5;r++){
+    for(let c=0;c<12;c++){
+      const idx = r*12+c+1;
+      const div=document.createElement('div');
+      div.className='slot';
+      const label=document.createElement('span');
+      label.textContent = namesBySlot[idx] || `#${idx}`;
+      div.appendChild(label);
+      boxGrid.appendChild(div);
+    }
   }
+}
 
-  function drawOverlay(imgEl, overlayCanvas, W, H, slots, bands){
-    const ov=overlayCanvas; const dispW=imgEl.clientWidth, dispH=imgEl.clientHeight; ov.width=dispW; ov.height=dispH;
-    const sx=dispW/W, sy=dispH/H; const ctx=ov.getContext('2d'); ctx.clearRect(0,0,ov.width,ov.height);
-    ctx.lineWidth=2; ctx.font='10px sans-serif'; ctx.textBaseline='top';
-    // Slots
-    slots.forEach((s,i)=>{
-      const px=s.x*sx, py=s.y*sy, pw=s.w*sx, ph=s.h*sy;
-      ctx.strokeStyle = s.present? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
-      ctx.strokeRect(px,py,pw,ph);
-      ctx.fillStyle = s.present? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
-      ctx.fillRect(px+2,py+2,20,12); ctx.fillStyle='#fff'; ctx.fillText(String(i+1), px+6, py+3);
-    });
-    // Yellow bands
-    ctx.strokeStyle='rgba(240,200,0,0.95)';
-    bands.forEach(b=> ctx.strokeRect(b.x*sx, b.y*sy, b.w*sx, b.h*sy));
-  }
-
-  // Simple non‑max suppression peak picker
-  function findPeaks(arr, minVal, minDist){
-    const idx = Array.from(arr.keys()).sort((a,b)=>arr[b]-arr[a]);
-    const picked=[]; for(const i of idx){ if(arr[i] < minVal) break; if(picked.every(j=>Math.abs(j-i)>=minDist)) picked.push(i); }
-    picked.sort((a,b)=>a-b); return picked;
-  }
-
-  // ======== Projection detector that also returns the blue mask (for debug) ========
-  function detectRowsAndColumns(cv, src, W, H, hsvRange){
-    const hsv=new cv.Mat(); cv.cvtColor(src,hsv,cv.COLOR_RGBA2HSV);
-    const low=new cv.Mat(hsv.rows,hsv.cols,hsv.type(), [hsvRange.hMin, hsvRange.sMin, hsvRange.vMin, 0]);
-    const high=new cv.Mat(hsv.rows,hsv.cols,hsv.type(), [hsvRange.hMax, 255, 255, 255]);
-    const mask=new cv.Mat(); cv.inRange(hsv, low, high, mask);
-    const k=cv.Mat.ones(3,3,cv.CV_8U); cv.morphologyEx(mask, mask, cv.MORPH_OPEN, k); cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, k);
-
-    // Row projection
-    const rowSum = new Float32Array(H);
-    for (let y=0; y<H; y++){ const row = mask.row(y); rowSum[y] = cv.countNonZero(row); }
-    for (let y=1; y<H-1; y++) rowSum[y] = (rowSum[y-1] + rowSum[y] + rowSum[y+1]) / 3;
-    const minRowBlue = 0.02 * W; // ~2% blue pixels across row
-    let barsY = findPeaks(rowSum, minRowBlue, Math.round(H*0.08)).slice(0,5);
-
-    // Column projection around best row
-    let colCenters=[];
-    if (barsY.length){
-      let bestRow=barsY[0], bestVal=rowSum[bestRow]; for (const r of barsY){ if(rowSum[r] > bestVal){ bestRow=r; bestVal=rowSum[r]; } }
-      const bandHalf = Math.max(6, Math.round(H*0.015));
-      const y0 = Math.max(0, bestRow-bandHalf), y1=Math.min(H-1, bestRow+bandHalf);
-      const colSum = new Float32Array(W);
-      for (let x=0; x<W; x++){ let s=0; for (let y=y0; y<=y1; y++){ if(mask.ucharPtr(y,x)[0]) s++; } colSum[x]=s; }
-      for (let x=1; x<W-1; x++) colSum[x]=(colSum[x-1]+colSum[x]+colSum[x+1])/3;
-      const minColBlue = 0.12 * (y1 - y0 + 1);
-      let colPeaks = findPeaks(colSum, minColBlue, Math.round(W*0.05));
-      if (colPeaks.length < 10){ const step=W/12; colCenters = Array.from({length:12},(_,i)=>(i+0.5)*step); }
-      else {
-        if (colPeaks.length > 12){ const keep=[]; const step = colPeaks.length/12; for(let i=0;i<12;i++) keep.push(colPeaks[Math.round(i*step)]); colPeaks = keep; }
-        colCenters = colPeaks.sort((a,b)=>a-b);
-      }
+// Load roster (from repo or upload)
+async function loadRoster() {
+  return new Promise((resolve)=>{
+    if (rosterChoice.value === 'upload') {
+      if (!rosterUpload.files[0]) return resolve([]);
+      Papa.parse(rosterUpload.files[0], { header: true, complete: r=>resolve(r.data) });
     } else {
-      // Fallback so overlay still appears
-      barsY = Array.from({length:5},(_,i)=> (H*0.20) + i*(H*0.13));
-      const step=W/12; colCenters = Array.from({length:12},(_,i)=>(i+0.5)*step);
+      Papa.parse(rosterChoice.value, { download: true, header: true, complete: r=>resolve(r.data) });
     }
+  });
+}
 
-    return { barsY, colCenters, mask, hsv, low, high, k };
+function securityToBoxSlot(sec){
+  // Examples: 9A11 → box 9A, slot 11; SM1-22 → box SM1, slot 22
+  if(!sec) return null;
+  const s = sec.replace(/\s+/g,'').toUpperCase();
+  const m = s.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/);
+  if(!m) return null;
+  return { box:m[1], slot: parseInt(m[2],10) };
+}
+
+function rosterByBox(boxId){
+  const map={};
+  for(const row of roster){
+    const info = securityToBoxSlot(row['Security Number']||row['SecurityNumber']);
+    if (info && info.box===boxId) map[info.slot] = row['Full Name'];
   }
+  return map;
+}
 
-  function buildSlots(W, H, barsY, colCenters, bandPct, marginPct){
-    if (barsY.length < 5){ const step = barsY.length>1 ? (barsY[1]-barsY[0]) : (H/6); while (barsY.length < 5) barsY.push(Math.min(H-10, barsY[barsY.length-1] + step)); }
-    const centers = colCenters.slice(0,12);
-    const bounds=[ centers[0] - (centers[1]-centers[0])/2 ];
-    for(let i=0;i<centers.length-1;i++) bounds.push((centers[i]+centers[i+1])/2);
-    bounds.push( centers[centers.length-1] + (centers[centers.length-1]-centers[centers.length-2])/2 );
+// Photo preview
+photoInput.addEventListener('change',()=>{
+  const f = photoInput.files[0]; if(!f) return;
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = ()=>{ preview.innerHTML=''; preview.appendChild(img); currentImage = img; };
+  img.src = url;
+});
 
-    const slots=[]; const bands=[];
-    for(let r=0;r<5;r++){
-      const barY=barsY[r];
-      const rh = r<barsY.length-1? (barsY[r+1]-barsY[r]) : (barsY[r] - (barsY[r-1]|| (barsY[r]-H/5)));
-      const rowH = Math.max(H*0.12, Math.min(H*0.28, Math.abs(rh)));
-      const bandH = Math.max(8, rowH*bandPct);
-      const bodyH = Math.max(30, rowH*0.65);
-      const bandY = Math.max(0, Math.min(H-10, barY - bandH - rowH*marginPct));
-      const bodyYTop = Math.max(0, Math.min(H-10, barY - bodyH - rowH*0.10));
-      for(let c=0;c<12;c++){
-        const x0=bounds[c], x1=bounds[c+1]; const w=Math.max(10, x1-x0);
-        slots.push({ x: x0+Math.floor(w*0.08), y: bodyYTop, w: Math.floor(w*0.84), h: Math.floor(bodyH), present:false });
-        bands.push({ x: x0+Math.floor(w*0.10), y: bandY, w: Math.floor(w*0.80), h: Math.floor(Math.min(bandH, rowH*0.35)) });
-      }
+// Roster change UI
+rosterChoice.addEventListener('change',()=>{
+  rosterUpload.style.display = rosterChoice.value==='upload' ? 'block':'none';
+});
+
+// Calibrate: divide photo into a 12×5 grid, find the foam channels via simple grid assumption.
+// Fast MVP: we store normalized ROIs based on the photo bounds; later runs reuse them.
+const calibrateBtn = document.getElementById('calibrateBtn');
+calibrateBtn.addEventListener('click',()=>{
+  const box = document.getElementById('boxSelect').value || 'AUTO';
+  if(!currentImage) return alert('Take or upload a photo first.');
+  const rois=[]; const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
+  // Assume centered tray; we keep generous margins; tweak if needed in box_config.json later.
+  const padX=0.08*W, padY=0.10*H; const gridW = W-2*padX, gridH = H-2*padY;
+  const cellW = gridW/12, cellH = gridH/5;
+  for(let r=0;r<5;r++){
+    for(let c=0;c<12;c++){
+      rois.push({x:(padX+c*cellW)/W, y:(padY+r*cellH)/H, w:cellW/W, h:cellH/H});
     }
-    return { slots, bands };
   }
+  boxConfig[box] = { rois };
+  localStorage.setItem('phonebox_config', JSON.stringify(boxConfig));
+  alert('Calibrated this box using a simple 12×5 grid. You can refine later in box_config.json.');
+});
 
-  function App(){
-    // Readiness
-    const [cvReady,setCvReady]=useState(false);
+async function ensureModel(){
+  if(!mobilenetModel){ mobilenetModel = await mobilenet.load(); }
+}
 
-    // UI state
-    const [imageURL,setImageURL]=useState(null);
-    const [busy,setBusy]=useState(false);
-    const [stats,setStats]=useState(null);
-    const [showMask,setShowMask]=useState(true);
+function cropToCanvas(img, roi){
+  const c = document.createElement('canvas');
+  const W = img.naturalWidth, H = img.naturalHeight;
+  c.width = Math.round(roi.w*W); c.height = Math.round(roi.h*H);
+  const ctx=c.getContext('2d');
+  ctx.drawImage(img, roi.x*W, roi.y*H, roi.w*W, roi.h*H, 0,0,c.width,c.height);
+  return c;
+}
 
-    // Vision params (tuned for your photos)
-    const [hsvRange,setHsvRange]=useState({ hMin:90, hMax:140, sMin:40, vMin:40 });
-    const [bandPct,setBandPct]=useState(0.22);
-    const [marginPct,setMarginPct]=useState(0.06);
+async function embedCanvas(canvas){
+  await ensureModel();
+  const logits = mobilenetModel.infer(canvas, true);
+  const emb = await logits.data();
+  logits.dispose();
+  return Array.from(emb);
+}
 
-    const imgRef=useRef(null); const workRef=useRef(null); const overlayRef=useRef(null); const maskRef=useRef(null);
+function cosSim(a,b){
+  let dot=0, na=0, nb=0; for(let i=0;i<a.length;i++){ dot+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; }
+  return dot/(Math.sqrt(na)*Math.sqrt(nb)+1e-8);
+}
 
-    // Wait for OpenCV to be ready
-    useEffect(()=>{
-      if (window.cv && window.cv.onRuntimeInitialized !== undefined){
-        window.cv.onRuntimeInitialized = ()=> setCvReady(true);
+// Storage for per-student reference embeddings
+const DB_KEY='phonebox_embeddings_v1';
+function loadDB(){ return JSON.parse(localStorage.getItem(DB_KEY)||'{}'); }
+function saveDB(db){ localStorage.setItem(DB_KEY, JSON.stringify(db)); }
+
+async function analyze(){
+  statusEl.textContent='Loading roster…';
+  roster = await loadRoster();
+  const boxSel = document.getElementById('boxSelect').value;
+  let boxId = boxSel || 'AUTO';
+  const namesBySlot = boxSel ? rosterByBox(boxSel) : {};
+  drawGrid(namesBySlot);
+
+  if(!currentImage) return alert('Please take or upload a photo.');
+  const cfg = boxConfig[boxId] || boxConfig['AUTO'];
+  if(!cfg){ return alert('Please calibrate once (per box).'); }
+
+  // Compute embeddings for each ROI and compare vs saved DB
+  statusEl.textContent='Computing embeddings…';
+  const db = loadDB();
+  const records=[]; // [{slot, expectedName, detectedId, status}]
+
+  for(let i=0;i<cfg.rois.length;i++){
+    const roi = cfg.rois[i];
+    const canvas = cropToCanvas(currentImage, roi);
+    const emb = await embedCanvas(canvas);
+
+    // Determine if slot is empty by measuring image variance/brightness
+    const ctx = canvas.getContext('2d');
+    const {data} = ctx.getImageData(0,0,canvas.width,canvas.height);
+    let sum=0; for(let j=0;j<data.length;j+=4){ sum += data[j]+data[j+1]+data[j+2]; }
+    const avg = sum/(data.length/4)/255; // 0..3 → normalize to 0..1
+    const occupied = avg < 0.7; // heuristic: darker means phone present
+
+    const slot = i+1;
+    const expectedName = namesBySlot[slot] || '';
+
+    let detectedId = null, similarity = 0;
+    if(occupied){
+      // Search best matching saved embedding for this expected student (if we have one) else global
+      if(expectedName && db[expectedName]){
+        const best = db[expectedName];
+        similarity = cosSim(emb, best);
+        detectedId = expectedName;
       } else {
-        const check=()=>{ if(window.cv && window.cv.Mat) setCvReady(true); else setTimeout(check, 100); }; check();
+        let bestName=null, bestSim=-1;
+        for(const [name, ref] of Object.entries(db)){
+          const sim = cosSim(emb, ref);
+          if(sim>bestSim){bestSim=sim; bestName=name;}
+        }
+        detectedId = bestName; similarity = bestSim;
       }
-    },[]);
-
-    const onPhoto=(file)=>{ setImageURL(URL.createObjectURL(file)); setStats(null); };
-
-    async function ensureImageReady(){
-      const img = imgRef.current; if(!img) return false; if (img.complete && img.naturalWidth>0) return true; try { await img.decode(); return true; } catch { return false; }
     }
 
-    const analyze=async()=>{
-      if(!cvReady) return alert('OpenCV still loading… try in a moment.');
-      if(!imageURL) return alert('Add a photo first.');
-      const ok = await ensureImageReady(); if(!ok) return alert('Image not ready yet—try Analyze again.');
-      setBusy(true); setTimeout(()=>{ try{ runAnalysis(); } finally{ setBusy(false); } }, 10);
-    };
-
-    function drawMaskPreview(mask){
-      if(!showMask || !mask) return;
-      const w=mask.cols, h=mask.rows; const canvas=maskRef.current; const maxW=320; const scale=maxW/w; canvas.width=maxW; canvas.height=Math.round(h*scale);
-      const dst = new window.cv.Mat(); window.cv.resize(mask, dst, new window.cv.Size(canvas.width, canvas.height)); window.cv.imshow(canvas, dst); dst.delete();
+    let status='empty';
+    if(occupied && expectedName){
+      if(!db[expectedName]) status = 'unknown (no reference yet)';
+      else if(similarity>0.80) status='ok';
+      else status='mismatch (possible fake)';
+    } else if(occupied && !expectedName) {
+      status = 'unexpected phone';
+    } else if(!occupied && expectedName) {
+      status = 'missing';
     }
 
-    function runAnalysis(){
-      const img=imgRef.current; const work=workRef.current; const W0=img.naturalWidth, H0=img.naturalHeight; work.width=W0; work.height=H0; const ctx=work.getContext('2d'); ctx.drawImage(img,0,0,W0,H0);
-      const cv=window.cv; const src=cv.imread(work); const W=src.cols, H=src.rows;
-
-      // Detect rows/cols & produce mask
-      const { barsY, colCenters, mask, hsv, low, high, k } = detectRowsAndColumns(cv, src, W, H, hsvRange);
-      drawMaskPreview(mask);
-
-      // Build slots/bands
-      const { slots, bands } = buildSlots(W, H, barsY, colCenters, bandPct, marginPct);
-
-      // Presence detection (bottom band emphasized)
-      const densities=[]; const densitiesBottom=[];
-      for(let i=0;i<slots.length;i++){
-        const s=slots[i]; const b=bands[i];
-        let mat1=src.roi(new cv.Rect(s.x, s.y, s.w, s.h)); let g1=new cv.Mat(); cv.cvtColor(mat1,g1,cv.COLOR_RGBA2GRAY); let bl1=new cv.Mat(); cv.GaussianBlur(g1,bl1,new cv.Size(5,5),0,0,cv.BORDER_DEFAULT); let e1=new cv.Mat(); cv.Canny(bl1,e1,35,120); densities.push(cv.countNonZero(e1)/(s.w*s.h)); mat1.delete(); g1.delete(); bl1.delete(); e1.delete();
-        let mat2=src.roi(new cv.Rect(b.x, b.y, b.w, b.h)); let g2=new cv.Mat(); cv.cvtColor(mat2,g2,cv.COLOR_RGBA2GRAY); let bl2=new cv.Mat(); cv.GaussianBlur(g2,bl2,new cv.Size(3,3),0,0,cv.BORDER_DEFAULT); let e2=new cv.Mat(); cv.Canny(bl2,e2,30,100); densitiesBottom.push(cv.countNonZero(e2)/(b.w*b.h)); mat2.delete(); g2.delete(); bl2.delete(); e2.delete();
-      }
-      const thrFull=robustThreshold(densities); const thrBottom=robustThreshold(densitiesBottom);
-      for(let i=0;i<slots.length;i++) slots[i].present = (densitiesBottom[i]>thrBottom) || (densities[i]>thrFull);
-
-      // Draw overlay (always)
-      drawOverlay(imgRef.current, overlayRef.current, W, H, slots, bands);
-
-      setStats({ rowsFound: barsY.length, colsFound: colCenters.length, thrFull: +thrFull.toFixed(4), thrBottom: +thrBottom.toFixed(4), present: slots.filter(s=>s.present).length });
-
-      // cleanup
-      mask.delete(); hsv.delete(); low.delete(); high.delete(); k.delete(); src.delete();
-    }
-
-    return React.createElement('div',{className:'max-w-6xl mx-auto space-y-4'},[
-      React.createElement('div',{className:'card'},[
-        React.createElement('h1',{className:'text-2xl font-bold'},'Phone Box Checker — Projection Detector + Blue Mask Debug'),
-        React.createElement('div',{className:'flex flex-wrap items-center gap-2 small mt-1'},[
-          React.createElement('span',{className:'badge',style:{background:cvReady?'#DCFCE7':'#FEF3C7', color:'#111'}}, cvReady? 'OpenCV: ✅ ready' : 'OpenCV: loading…')
-        ]),
-        React.createElement('p',{className:'small mt-2'},'Tip: If the Blue Mask preview is black, widen Hue to 90–140 and lower Sat/Val mins to ~40–80, then Analyze again.')
-      ]),
-
-      React.createElement('div',{className:'card'},[
-        React.createElement('div',{className:'flex flex-wrap items-center gap-3 text-sm'},[
-          React.createElement('label',{className:'btn'},['Take/Upload Photo', React.createElement('input',{type:'file',accept:'image/*',capture:'environment',className:'hidden',onChange:e=>{ const f=e.target.files?.[0]; if(f) onPhoto(f); }})]),
-          React.createElement('button',{className:'btn btn-primary',onClick:analyze,disabled:busy || !cvReady}, ()=> busy? 'Analyzing…' : 'Analyze'),
-          React.createElement('label',{className:'flex items-center gap-2'},[
-            React.createElement('input',{type:'checkbox',checked:showMask,onChange:e=>setShowMask(e.target.checked)}),
-            React.createElement('span',{className:'small'},'Show blue-mask preview')
-          ]),
-          React.createElement('div',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'small'},'Hue'),
-            React.createElement('input',{className:'slider',type:'range',min:70,max:160,step:1,value:hsvRange.hMin,onChange:e=>setHsvRange({...hsvRange,hMin:+e.target.value})}),
-            React.createElement('span',{className:'small'},()=>String(hsvRange.hMin)),
-            React.createElement('span',{className:'small ml-2'},'→'),
-            React.createElement('input',{className:'slider',type:'range',min:80,max:180,step:1,value:hsvRange.hMax,onChange:e=>setHsvRange({...hsvRange,hMax:+e.target.value})}),
-            React.createElement('span',{className:'small'},()=>String(hsvRange.hMax))
-          ]),
-          React.createElement('div',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'small'},'Sat min'),
-            React.createElement('input',{className:'slider',type:'range',min:0,max:255,step:1,value:hsvRange.sMin,onChange:e=>setHsvRange({...hsvRange,sMin:+e.target.value})}),
-            React.createElement('span',{className:'small'},()=>String(hsvRange.sMin))
-          ]),
-          React.createElement('div',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'small'},'Val min'),
-            React.createElement('input',{className:'slider',type:'range',min:0,max:255,step:1,value:hsvRange.vMin,onChange:e=>setHsvRange({...hsvRange,vMin:+e.target.value})}),
-            React.createElement('span',{className:'small'},()=>String(hsvRange.vMin))
-          ]),
-          React.createElement('div',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'small'},'Band %'),
-            React.createElement('input',{className:'slider',type:'range',min:10,max:40,step:1,value:Math.round(bandPct*100),onChange:e=>setBandPct(+e.target.value/100)}),
-            React.createElement('span',{className:'small'},()=>Math.round(bandPct*100)+'%')
-          ]),
-          React.createElement('div',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'small'},'Above‑bar margin %'),
-            React.createElement('input',{className:'slider',type:'range',min:0,max:20,step:1,value:Math.round(marginPct*100),onChange:e=>setMarginPct(+e.target.value/100)}),
-            React.createElement('span',{className:'small'},()=>Math.round(marginPct*100)+'%')
-          ])
-        ])
-      ]),
-
-      React.createElement('div',{className:'grid md:grid-cols-3 gap-4'},[
-        React.createElement('div',{className:'card md:col-span-2'},[
-          React.createElement('h3',{className:'font-semibold mb-2'},'Photo + Overlay'),
-          React.createElement('div',{className:'overlay-wrap'},[
-            imageURL ? React.createElement('img',{ref:imgRef,src:imageURL,alt:'box',className:'w-full h-auto rounded'}) : React.createElement('div',{className:'small p-8'},'Add a photo to see 60 green/red slot rectangles and yellow bands.'),
-            React.createElement('canvas',{ref:overlayRef,className:'overlay-canvas'})
-          ]),
-          React.createElement('canvas',{ref:workRef,className:'hidden'})
-        ]),
-        React.createElement('div',{className:'card'},[
-          React.createElement('h3',{className:'font-semibold mb-2'},'Blue Mask (debug)'),
-          React.createElement('canvas',{ref:maskRef,className:'w-full border rounded',style:{background:'#000'}}),
-          React.createElement('div',{className:'small mt-2'},'If this looks black, widen Hue to 90–140 and set Sat/Val mins to ~40–80, then Analyze again.')
-        ])
-      ]),
-
-      stats && React.createElement('div',{className:'card small'},[
-        React.createElement('div',{},()=>`Rows found: ${stats.rowsFound}; Columns found: ${stats.colsFound}`),
-        React.createElement('div',{},()=>`Thresholds — full: ${stats.thrFull}, bottom: ${stats.thrBottom}`),
-        React.createElement('div',{},()=>`Estimated phones present: ${stats.present}`)
-      ])
-    ]);
+    records.push({slot, expectedName, detectedId: occupied? (detectedId||'—'): '—', status});
   }
 
-  ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
-  </script>
+  // Render table
+  resultsBody.innerHTML='';
+  for(const r of records){
+    const tr=document.createElement('tr');
+    tr.className = r.status==='ok'?'ok':(r.status.includes('mismatch')?'mismatch':'');
+    tr.innerHTML = `<td>${r.slot}</td><td>${r.expectedName||''}</td><td>${r.detectedId||''}</td><td><span class="pill">${r.status}</span></td>`;
+    resultsBody.appendChild(tr);
+  }
+  statusEl.textContent='Done.';
+}
+
+async function saveEmbeddings(){
+  if(!currentImage) return alert('Take/upload a photo first.');
+  roster = await loadRoster();
+  const boxSel = document.getElementById('boxSelect').value;
+  const boxId = boxSel || 'AUTO';
+  const cfg = boxConfig[boxId] || boxConfig['AUTO'];
+  if(!cfg){ return alert('Calibrate first.'); }
+
+  const namesBySlot = rosterByBox(boxSel);
+  const db = loadDB();
+
+  for(let i=0;i<cfg.rois.length;i++){
+    const slot=i+1; const name = namesBySlot[slot]; if(!name) continue;
+    const canvas = cropToCanvas(currentImage, cfg.rois[i]);
+    const emb = await embedCanvas(canvas);
+    db[name] = emb; // overwrite
+  }
+  saveDB(db);
+  alert('Saved embeddings for the visible phones in this photo to your browser storage. Repeat a few days to improve robustness.');
+}
+
+// OCR auto-detect box (reads printed security numbers/labels near slots)
+async function autoDetectBox(){
+  if(!currentImage) return;
+  statusEl.textContent='Reading labels (OCR)…';
+  const worker = await Tesseract.createWorker('eng');
+  const { data: { text } } = await worker.recognize(currentImage);
+  await worker.terminate();
+  const m = text.toUpperCase().match(/(SM\d|\d{1,2}[A-F])\s*-?\s*\d{1,2}/);
+  if(m){
+    document.getElementById('boxSelect').value = m[1];
+    statusEl.textContent = `Detected box: ${m[1]}`;
+    drawGrid(rosterByBox(m[1]));
+  } else {
+    statusEl.textContent = 'Could not auto-detect a box; please choose from the menu.';
+  }
+}
+
+// Wire buttons
+ document.getElementById('analyzeBtn').addEventListener('click', analyze);
+ document.getElementById('saveEmbeddingBtn').addEventListener('click', saveEmbeddings);
+ document.getElementById('boxSelect').addEventListener('change', async ()=>{
+  roster = await loadRoster();
+  const id = document.getElementById('boxSelect').value; drawGrid(rosterByBox(id));
+ });
+ document.getElementById('photo').addEventListener('change', ()=>{
+  // try OCR to pick box
+  setTimeout(autoDetectBox, 400);
+ });
+
+// Load cached config if any
+(function init(){
+  const saved = localStorage.getItem('phonebox_config');
+  if(saved) boxConfig = JSON.parse(saved);
+  drawGrid();
+})();
+</script>
 </body>
 </html>
