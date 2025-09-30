@@ -22,9 +22,12 @@
   button.primary{background:linear-gradient(180deg,#3bc2f2,#1aa1d9);border:none;font-weight:800}
   small{color:var(--muted)}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0c1333}
-  #img{width:100%;display:none}
-  #overlay{position:absolute;inset:0;pointer-events:none}
+
+  /* ----- Preview area ----- */
+  #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0c1333;min-height:200px}
+  #img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;z-index:0}
+  #overlay{position:absolute;inset:0;pointer-events:none;z-index:1}
+
   .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
   .pill{display:inline-block;padding:.2rem .6rem;border-radius:999px;background:#ffffff24;font-size:12px}
   .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:6px;margin:10px 0}
@@ -98,18 +101,18 @@
 </main>
 
 <script>
-/* ===== State & UI ===== */
+/* ========== Elements & State ========== */
 const img = document.getElementById('img');
+const stage = document.getElementById('stage');
 const overlay = document.getElementById('overlay');
 const ctx = overlay.getContext('2d');
 
 const statusEl = document.getElementById('status');
 const progressEl = document.getElementById('progress');
 
-const showRowHeight = ()=> parseInt(document.getElementById('rowPct').value,10)/100;
-const showEdgeCrop  = ()=> parseInt(document.getElementById('edgePct').value,10)/100;
+const rowPctEl = document.getElementById('rowPct');
+const edgePctEl = document.getElementById('edgePct');
 const fastModeEl = document.getElementById('fastMode');
-
 const analyzeBtn = document.getElementById('analyze');
 const scanBtn = document.getElementById('scan');
 const rosterSource = document.getElementById('rosterSource');
@@ -121,13 +124,12 @@ const boxGrid = document.getElementById('boxGrid');
 let current=null;         // {image, W, H}
 let rowTops=[];           // 5 y-positions
 let boundsByRow=[];       // 5×13 ints
-let LR=[];                // 5×[L,R] (in pixels)
-let rois=[];              // 60 rects {x,y,w,h,row,col}
+let LR=[];                // 5×[L,R]
+let rois=[];              // 60 rects
 let roster=[];            // CSV rows
-let worker=null;          // Tesseract worker
-let workerReady=false;
+let worker=null, workerReady=false;
 
-/* ===== Boxes ===== */
+/* ========== Boxes ========== */
 (function fillBoxes(){
   const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
   grades.forEach(g=>letters.forEach(l=>ids.push(g+l)));
@@ -135,7 +137,7 @@ let workerReady=false;
   boxSel.innerHTML = ids.map(x=>`<option>${x}</option>`).join('');
 })();
 
-/* ===== Roster ===== */
+/* ========== Roster ========== */
 rosterSource.addEventListener('change', ()=>{
   rosterFile.style.display = rosterSource.value==='upload' ? 'block' : 'none';
   if(rosterSource.value==='repo') loadRosterFromRepo();
@@ -151,54 +153,59 @@ function loadRosterFromFile(f){
 }
 loadRosterFromRepo();
 
-/* ===== Photo ===== */
+/* ========== Photo loading with reliable preview sizing ========== */
 document.getElementById('photo').addEventListener('change', (e)=>{
   const f = e.target.files[0]; if(!f) return;
   const url = URL.createObjectURL(f);
   const im = new Image();
   im.onload = () => {
     current = { image: im, W: im.naturalWidth, H: im.naturalHeight };
-    img.src = url; img.style.display='block';
-    fitCanvas();
+    img.src = url;
+    img.style.display='block';
+
+    // Size the stage to match the photo aspect ratio so the preview is always visible
+    sizeToImageAspect();
+    draw();
     setStatus('Photo loaded. Tap “Scan & Overlay”.');
   };
+  im.onerror = () => setStatus('Could not load image. Try another photo.');
   im.src = url;
 });
 
-function fitCanvas(){
+// Keep the preview sized correctly when the screen changes
+window.addEventListener('resize', sizeToImageAspect);
+function sizeToImageAspect(){
   if(!current) return;
-  const stage = document.getElementById('stage').getBoundingClientRect();
-  const W = stage.width;
-  const H = W * (current.H / current.W);
-  overlay.width = W; overlay.height = H;
-  document.getElementById('left').style.aspectRatio = `${current.W}/${current.H}`;
-  draw();
+  const W = stage.clientWidth;
+  const H = Math.max(200, Math.round(W * (current.H / current.W))); // maintain aspect ratio, never collapse
+  stage.style.height = H + 'px';
+  overlay.width = W;
+  overlay.height = H;
+  // img covers the stage (absolute+contain via CSS)
 }
-window.addEventListener('resize', fitCanvas);
 
+/* ========== Status helpers ========== */
 function setStatus(t){ statusEl.textContent = t||''; }
 function setProgress(t){ progressEl.textContent = t||''; }
 
-/* ===== Scan & Overlay ===== */
+/* ========== Scan & Overlay ========== */
 scanBtn.addEventListener('click', async ()=>{
   if(!current){ alert('Upload a photo first.'); return; }
   analyzeBtn.disabled = true;
   setStatus('Scanning…'); setProgress('preparing');
 
   // 1) Detect 5 blue bars (fast)
-  rowTops = await findBlueBars(current.image, showEdgeCrop());
-  if(rowTops.length!==5){ setStatus('Could not find 5 blue bars. Try a straighter photo or adjust Edge crop %.'); draw(); return; }
+  rowTops = await findBlueBars(current.image, edgeCrop());
+  if(rowTops.length!==5){ setStatus('Could not find 5 blue bars. Adjust Edge crop % or retake photo.'); draw(); return; }
   setProgress('found rows');
 
-  // 2) For each row: find L/R from blue content (fast, no OCR)
-  LR = await findLRForRows(current.image, rowTops, showEdgeCrop());
-  // 3) Bounds: OCR centers if available; fallback to equal 12 within L/R.
-  boundsByRow = [];
+  // 2) Per-row L/R from blue content
+  LR = await findLRForRows(current.image, rowTops, edgeCrop());
 
+  // 3) Bounds per row: OCR centers if available; otherwise equal 12 between L/R
+  boundsByRow = [];
   const useOCR = !fastModeEl.checked;
-  if(useOCR){
-    await ensureWorker(); // try to init; if fails, we continue with fallback
-  }
+  if(useOCR){ await ensureWorker(); } // if this fails we silently fallback
 
   const gaps=[]; for(let i=1;i<rowTops.length;i++) gaps.push(rowTops[i]-rowTops[i-1]);
   const avgGap = gaps.reduce((a,b)=>a+b,0)/gaps.length;
@@ -213,29 +220,25 @@ scanBtn.addEventListener('click', async ()=>{
       const y1 = Math.min(current.H-1, rowTops[r] + bandH);
       const crop = cropRectCanvas(current.image, 0, y0, current.W, y1-y0+1);
 
-      // Per-row timeout so we never get stuck
-      const rowResult = await withTimeout(recognizeDigits(crop), 6000).catch(()=>null);
-
+      // per-row timeout to avoid “stuck” state
       let centers=null;
-      if(rowResult && rowResult.length){
-        const xs = rowResult.map(o=>o.x).sort((a,b)=>a-b);
-        centers = normalizeToTwelve(xs);
-      }
+      try{
+        const rowResult = await withTimeout(recognizeDigits(crop), 6000);
+        if(rowResult && rowResult.length){
+          const xs = rowResult.map(o=>o.x).sort((a,b)=>a-b);
+          centers = normalizeToTwelve(xs);
+        }
+      }catch(e){ /* ignore and fallback */ }
 
-      if(centers){
-        const bounds = toBoundsFromCenters(centers, L, R);
-        boundsByRow.push(bounds);
-      }else{
-        boundsByRow.push(equalBounds(L, R, 12));
-      }
+      boundsByRow.push( centers ? toBoundsFromCenters(centers, L, R) : equalBounds(L, R, 12) );
     } else {
       boundsByRow.push(equalBounds(L, R, 12));
     }
   }
 
-  // 4) Build ROIs above each row
+  // 4) Build rectangles above each row
   rois = [];
-  const pct = showRowHeight();
+  const pct = rowHeight();
   for(let r=0;r<5;r++){
     const yBottom = rowTops[r];
     const yTop = Math.max(0, Math.round(yBottom - avgGap*pct));
@@ -252,7 +255,7 @@ scanBtn.addEventListener('click', async ()=>{
   setProgress('ready'); setStatus('Overlay ready. Tap “Analyze & Compare”.');
 });
 
-/* ===== Analyze & Compare ===== */
+/* ========== Analyze & Compare ========== */
 analyzeBtn.addEventListener('click', ()=>{
   if(!rois.length) return alert('Scan & Overlay first.');
   if(!boxSel.value) return alert('Choose a Box (e.g., 9B, 10C, SM1).');
@@ -280,7 +283,7 @@ analyzeBtn.addEventListener('click', ()=>{
   setStatus('Compared to roster.');
 });
 
-/* ===== Drawing ===== */
+/* ========== Draw overlay ========== */
 function draw(){
   ctx.clearRect(0,0,overlay.width,overlay.height);
   if(!current) return;
@@ -320,7 +323,7 @@ function draw(){
   }
 }
 
-/* ===== Roster helpers ===== */
+/* ========== Roster helpers ========== */
 function namesForBox(boxId){
   const out={};
   for(const row of roster){
@@ -344,7 +347,7 @@ function drawNamesGrid(namesBySlot={}){
   }
 }
 
-/* ===== Image color + geometry ===== */
+/* ========== Image/Color/Geometry ========== */
 function cropRectCanvas(imgEl, x,y,w,h){
   const c=document.createElement('canvas'); c.width=w; c.height=h;
   c.getContext('2d').drawImage(imgEl, x,y,w,h, 0,0,w,h);
@@ -357,14 +360,14 @@ function rgb2hsv(r,g,b){
   const s=max===0?0:d/max, v=max; return {h,s,v};
 }
 
-/* ---- Blue bar detection (fast) ---- */
+/* ---- Blue bar detection ---- */
 async function findBlueBars(imgEl, edgeCrop){
   const maxW=1200;
   const r=Math.min(1, maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
   const c=document.createElement('canvas'); c.width=W; c.height=H;
-  c.getContext('2d').drawImage(imgEl,0,0,W,H);
-  const {data}=c.getContext('2d').getImageData(0,0,W,H);
+  const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
+  const {data}=g.getImageData(0,0,W,H);
 
   const hueMin=190, hueMax=265, sMin=0.30, vMin=0.22;
   const x0=Math.round(W*edgeCrop), x1=Math.round(W*(1-edgeCrop));
@@ -400,7 +403,6 @@ async function findLRForRows(imgEl, tops, edgeCrop){
   const im=g.getImageData(0,0,W,H);
   const scaleX = imgEl.naturalWidth/W;
 
-  // estimate band height
   const gaps=[]; for(let i=1;i<tops.length;i++) gaps.push((tops[i]-tops[i-1])*r);
   const avgGap = gaps.reduce((a,b)=>a+b,0)/gaps.length || H/5;
   const bandH = Math.max(6, Math.round(avgGap*0.22));
@@ -430,7 +432,6 @@ function largestRun(col, pad){
   const thr = quantile([...col].slice(L,R+1), 0.55);
   const mask=new Uint8Array(W);
   for(let x=L;x<=R;x++) mask[x]=col[x]>=thr?1:0;
-  // pick widest contiguous run
   let best=[L,R], width=0, s=null;
   for(let x=L;x<=R;x++){
     if(mask[x] && s===null) s=x;
@@ -448,11 +449,11 @@ function quantile(a,q){const b=[...a].sort((x,y)=>x-y); const i=Math.max(0,Math.
 function equalBounds(L,R,n){ const step=(R-L)/n; const b=[Math.round(L)]; for(let i=1;i<n;i++) b.push(Math.round(L+i*step)); b.push(Math.round(R)); return b; }
 function normalizeToTwelve(centers){
   centers=centers.slice().sort((a,b)=>a-b);
-  while(centers.length>12){ // merge closest
+  while(centers.length>12){
     let bi=0, best=1e9; for(let i=0;i<centers.length-1;i++){const g=centers[i+1]-centers[i]; if(g<best){best=g;bi=i;}}
     centers.splice(bi,2,(centers[bi]+centers[bi+1])/2);
   }
-  while(centers.length<12){ // insert in widest gap
+  while(centers.length<12){
     let bi=0, best=-1; for(let i=0;i<centers.length-1;i++){const g=centers[i+1]-centers[i]; if(g>best){best=g;bi=i;}}
     centers.splice(bi+1,0,(centers[bi]+centers[bi+1])/2);
   }
@@ -464,7 +465,6 @@ function toBoundsFromCenters(centers, L, R){
   bounds.push(Math.max(L, Math.round(centers[0]-stepAvg/2)));
   for(let i=0;i<11;i++) bounds.push(Math.round((centers[i]+centers[i+1])/2));
   bounds.push(Math.min(R, Math.round(centers[11]+stepAvg/2)));
-  // ensure monotonic and inside [L..R]
   bounds[0]=Math.max(bounds[0], L);
   for(let i=1;i<bounds.length;i++) bounds[i]=Math.max(bounds[i], bounds[i-1]+1);
   bounds[bounds.length-1]=Math.min(bounds[bounds.length-1], R);
@@ -476,7 +476,7 @@ async function ensureWorker(){
   if(workerReady) return;
   try{
     setProgress('loading OCR…');
-    worker = await Tesseract.createWorker({ logger: m => { if(m.status) setProgress(m.status.replace('_',' ') ) }});
+    worker = await Tesseract.createWorker({ logger: m => { if(m.status) setProgress(m.status.replace('_',' ')); }});
     await worker.loadLanguage('eng');
     await worker.initialize('eng');
     await worker.setParameters({
@@ -491,12 +491,10 @@ async function ensureWorker(){
 async function recognizeDigits(cropCanvas){
   const { data } = await worker.recognize(cropCanvas);
   const words = data.words || [];
-  // keep digit clusters intact (10/11/12 OK)
   const xs = words
     .map(w => ({ txt:(w.text||'').replace(/\D/g,''), x:(w.bbox.x0+w.bbox.x1)/2 }))
     .filter(w => w.txt.length>0)
     .map(w => ({ x:w.x }));
-  // dedupe close centers
   xs.sort((a,b)=>a.x-b.x);
   const out=[]; const minGap=14;
   for(const p of xs){ if(!out.length || Math.abs(p.x - out[out.length-1].x) >= minGap) out.push(p); }
@@ -525,6 +523,23 @@ function slotOccupied(c){
   for(let x=0;x<cw;x++) cols[x]/=ch;
   let best=0,run=0; for(let x=0;x<cw;x++){ if(cols[x]>0.5){ run++; best=Math.max(best,run);} else run=0; }
   return best>=Math.round(cw*0.25);
+}
+
+/* ---- Convenience getters ---- */
+function edgeCrop(){ return parseInt(edgePctEl.value,10)/100; }
+function rowHeight(){ return parseInt(rowPctEl.value,10)/100; }
+
+/* ---- Names grid ---- */
+function drawNamesGrid(namesBySlot={}){
+  boxGrid.innerHTML='';
+  for(let r=0;r<5;r++){
+    for(let c=0;c<12;c++){
+      const idx=r*12+c+1;
+      const d=document.createElement('div'); d.className='slot';
+      const s=document.createElement('span'); s.textContent=namesBySlot[idx]||`#${idx}`;
+      d.appendChild(s); boxGrid.appendChild(d);
+    }
+  }
 }
 </script>
 </body>
