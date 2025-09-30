@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Phone Box Attendance (Blue-Row Aligner)</title>
+<title>Phone Box Attendance — Blue Pads (1–60)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
@@ -42,8 +42,6 @@
   .controls.sticky{position:sticky;bottom:0;z-index:5;background:linear-gradient(180deg,rgba(18,24,51,0),var(--card));padding-bottom:10px}
   details summary{cursor:pointer;user-select:none}
   details > div{background:#0f1738;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:10px}
-
-  /* Mobile-friendly tweaks */
   @media (max-width: 820px) {
     main{padding:8px}
     .wrap{grid-template-columns:1fr;gap:12px}
@@ -58,7 +56,7 @@
 <body>
 <header>
   <div style="font-weight:800">📱 Phone Box Attendance</div>
-  <div class="badge">Blue-Row Aligner • Client-only</div>
+  <div class="badge">Blue Pads (1–60) • Client-only</div>
 </header>
 <main>
   <div class="wrap">
@@ -70,10 +68,7 @@
           <select id="boxSelect">
             <option value="">Auto-detect from labels (OCR)</option>
             <optgroup label="Grade Boxes" id="gradeBoxes"></optgroup>
-            <optgroup label="Special">
-              <option>SM1</option>
-              <option>SM2</option>
-            </optgroup>
+            <optgroup label="Special"><option>SM1</option><option>SM2</option></optgroup>
           </select>
         </div>
         <div>
@@ -94,10 +89,10 @@
         <div>
           <label>Calibration</label>
           <div style="display:flex; gap:8px; flex-wrap:wrap">
-            <button id="autoBlueBtn" class="primary">Auto-calibrate (5 blue bars x 12 numbers)</button>
+            <button id="autoBlueBtn" class="primary">Auto-calibrate (lock to blue pads)</button>
             <button id="calibrateBtn">Manual 12×5 grid (fallback)</button>
           </div>
-          <small>Locks rows to the 5 blue number bars and columns to the 12 blue number pads in each row.</small>
+          <small>Finds 5 blue bars and exactly 12 blue pads per row (won’t split 10/11/12), then places phone rectangles above each number.</small>
         </div>
       </div>
 
@@ -129,7 +124,7 @@
             <label>Phone band height (% of row height)
               <input id="phonePct" type="range" min="30" max="100" step="5" value="70">
             </label>
-            <div style="font-size:12px;color:var(--muted)">Detected blue bars y: <span id="blueList">—</span></div>
+            <div style="font-size:12px;color:var(--muted)">Blue bars y: <span id="blueList">—</span></div>
           </div>
         </details>
       </div>
@@ -140,9 +135,7 @@
       <h2>Results</h2>
       <div id="boxGrid" class="grid" style="margin-bottom:10px"></div>
       <table>
-        <thead>
-          <tr><th>Slot</th><th>Expected</th><th>Detected</th><th>Status</th></tr>
-        </thead>
+        <thead><tr><th>Slot</th><th>Expected</th><th>Detected</th><th>Status</th></tr></thead>
         <tbody id="resultsBody"></tbody>
       </table>
     </section>
@@ -236,20 +229,22 @@ function drawOverlay(){
 
   const scaleX=overlay.width/currentImage.naturalWidth, scaleY=overlay.height/currentImage.naturalHeight;
 
-  // draw label-band ROIs only (thin, sits on blue pads)
-  if(cfg.roisLabel){
-    ctx.lineWidth=2; ctx.strokeStyle='rgba(58,160,255,.95)';
-    cfg.roisLabel.forEach(roi=>{
+  // draw phone-detection ROIs (above numbers)
+  if(cfg.roisDetect){
+    ctx.lineWidth=2;
+    cfg.roisDetect.forEach((roi,i)=>{
       const x=roi.x*currentImage.naturalWidth*scaleX;
       const y=roi.y*currentImage.naturalHeight*scaleY;
       const w=roi.w*currentImage.naturalWidth*scaleX;
       const h=roi.h*currentImage.naturalHeight*scaleY;
+      const status = lastRecords ? lastRecords[i].status : null;
+      ctx.strokeStyle = status==='ok' ? '#3ad27a' : status==='missing' ? '#ff6e6e' : 'rgba(255,255,255,.9)';
       ctx.strokeRect(x,y,w,h);
     });
   }
 }
 
-/* ---------- Calibration: 5 rows × 12 pads ---------- */
+/* ---------- Calibration: 5 rows × 12 pads (contiguous runs, no splitting 10/11/12) ---------- */
 document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
   if(!currentImage) return alert('Take or upload a photo first.');
   const box=document.getElementById('boxSelect').value||'AUTO';
@@ -257,99 +252,81 @@ document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
 
   const sMin=parseFloat(blueSatEl.value||'0.35');
   const vMin=parseFloat(blueValEl.value||'0.25');
-  const labelPct = (parseInt(labelPctEl.value||'3',10))/100;  // label band height as % of H
-  const phonePct = (parseInt(phonePctEl.value||'70',10))/100; // phone band height as % of row height
+  const labelPct = (parseInt(labelPctEl.value||'3',10))/100;   // label band height as % of H
+  const phonePct = (parseInt(phonePctEl.value||'70',10))/100;  // phone band height as % of row height
 
   const small = downscale(currentImage, 1100);
   const ctx = small.getContext('2d');
   const {data,width:W,height:H} = ctx.getImageData(0,0,small.width,small.height);
 
   // 1) find 5 blue horizontal bars
-  const yBars = await findFiveBlueLines(small, sMin, vMin); // returns 5 y positions
+  const yBars = await findFiveBlueLines(small, sMin, vMin);
   if(yBars.length!==5){ alert('Could not find 5 blue bars. Adjust S/V sliders or retake photo straighter.'); return; }
   blueListEl.textContent = yBars.map(y=>y.toFixed(0)).join(', ');
 
-  // estimate row height from gaps between bars
+  // estimate row height from gaps
   const gaps=[]; for(let i=1;i<yBars.length;i++) gaps.push(yBars[i]-yBars[i-1]);
   const rowH = median(gaps);
 
-  // 2) per row: find 12 blue number pads by column projection in a thin band around each bar
-  const xCentersByRow=[]; // array of arrays length 12
+  // 2) per row: find 12 pads as contiguous blue runs (don’t split 10/11/12)
+  const xRunsByRow=[]; // each item: [{start,end,center}] * 12
   const bandHalf = Math.max(3, Math.round((labelPct*H)/2));
   for(const y of yBars){
-    const centers = find12CentersInBand({data,W,H}, y, bandHalf, sMin, vMin);
-    if(centers.length!==12){
-      // retry with slightly wider band and looser thresholds
-      const centers2 = find12CentersInBand({data,W,H}, y, Math.round(bandHalf*1.6), Math.max(0.2,sMin-0.1), Math.max(0.18,vMin-0.07));
-      if(centers2.length!==12){ alert('Could not find 12 blue pads on one of the rows. Try again with sliders.'); return; }
-      xCentersByRow.push(centers2);
-    } else { xCentersByRow.push(centers); }
+    const runs = find12PadRunsInBand({data,W,H}, y, bandHalf, sMin, vMin);
+    if(runs.length!==12){ alert('Could not isolate 12 blue pads on a row. Tweak sliders and retry.'); return; }
+    xRunsByRow.push(runs);
   }
 
-  // 3) merge across rows → global 12 centers via median of each index
+  // 3) derive global column boundaries from median centers of each index
   const centersGlobal=[];
   for(let k=0;k<12;k++){
-    const vals = xCentersByRow.map(row=>row[k]).sort((a,b)=>a-b);
+    const vals = xRunsByRow.map(row=>row[k].center).sort((a,b)=>a-b);
     centersGlobal.push(vals[Math.floor(vals.length/2)]);
   }
+  const xBounds = [];
+  // left edge = left of first run; right edge = right of last run (median across rows)
+  const lefts = xRunsByRow.map(r=>r[0].start).sort((a,b)=>a-b);
+  const rights= xRunsByRow.map(r=>r[11].end).sort((a,b)=>a-b);
+  xBounds.push(lefts[Math.floor(lefts.length/2)]);
+  for(let k=0;k<11;k++) xBounds.push(Math.round((centersGlobal[k]+centersGlobal[k+1])/2));
+  xBounds.push(rights[Math.floor(rights.length/2)]); // length 13
 
-  // 4) convert centers → 13 boundaries (midpoints), with edges extrapolated
-  const xBounds=[ ];
-  for(let k=0;k<11;k++){
-    const mid=(centersGlobal[k]+centersGlobal[k+1])/2; xBounds.push(mid);
-  }
-  // left edge and right edge:
-  const left = Math.max(0, Math.round(centersGlobal[0] - (xBounds[0]-centersGlobal[0])));
-  const right= Math.min(W-1, Math.round(centersGlobal[11] + (centersGlobal[11]-xBounds[9])));
-  xBounds.unshift(left); xBounds.push(right); // now length 13
-
-  // 5) Build label ROIs (thin bands ON blue bars) and detection ROIs (above bars)
-  const roisLabel=[], roisDetect=[];
-  const labelH = Math.max(6, Math.round(labelPct*H)); // thin visual overlay
-  const detectH = Math.max(10, Math.round(phonePct*rowH)); // band above label used for phone detection
-  const detectGap = Math.round(0.04*rowH); // small gap above label
-
+  // 4) build detection ROIs (rectangles ABOVE the numbers for phones)
+  const roisDetect=[];
+  const detectH = Math.max(10, Math.round(phonePct*rowH)); // band above label
+  const detectGap = Math.round(0.04*rowH);                  // small gap above label
   for(let r=0;r<5;r++){
-    const yLabel0 = Math.max(0, yBars[r] - Math.floor(labelH/2));
-    const yLabel1 = Math.min(H-1, yLabel0 + labelH);
-    const yDet1 = Math.max(0, yBars[r] - detectGap);        // bottom of detection band (just above label)
-    const yDet0 = Math.max(0, yDet1 - detectH);             // top of detection band
-
+    const yDet1 = Math.max(0, yBars[r] - detectGap);
+    const yDet0 = Math.max(0, yDet1 - detectH);
     for(let c=0;c<12;c++){
       const x0=xBounds[c], x1=xBounds[c+1];
-      // label ROI (thin)
-      roisLabel.push({x:x0/W, y:yLabel0/H, w:(x1-x0)/W, h:(yLabel1-yLabel0)/H});
-      // detection ROI (thicker above blue)
       roisDetect.push({x:x0/W, y:yDet0/H, w:(x1-x0)/W, h:(yDet1-yDet0)/H});
     }
   }
 
-  // save
-  boxConfig[box] = { roisLabel, roisDetect };
+  boxConfig[box] = { roisDetect };
   localStorage.setItem('phonebox_config', JSON.stringify(boxConfig));
-  statusEl.textContent='Auto-calibration complete (locked to blue pads).';
+  statusEl.textContent='Auto-calibration complete (rectangles above numbers).';
   drawOverlay();
 });
 
-// Fallback manual grid (not used for blue-row alignment, but kept for emergencies)
+// Manual fallback (not aligned to blue pads, last resort)
 document.getElementById('calibrateBtn').addEventListener('click',()=>{
   const box=document.getElementById('boxSelect').value||'AUTO';
   if(!currentImage) return alert('Take or upload a photo first.');
-  const roisLabel=[], roisDetect=[]; const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
+  const roisDetect=[]; const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
   const padX=0.08*W, padY=0.10*H; const gridW=W-2*padX, gridH=H-2*padY;
   const cellW=gridW/12, cellH=gridH/5;
   for(let r=0;r<5;r++) for(let c=0;c<12;c++){
-    const lx=(padX+c*cellW)/W, ly=(padY + (r+0.9)*cellH)/H, lw=cellW/W, lh=(0.1*cellH)/H; // thin label strip near bottom
-    roisLabel.push({x:lx,y:ly,w:lw,h:lh});
-    const dy=(padY+r*cellH)/H, dh=(0.8*cellH)/H;
-    roisDetect.push({x:lx,y:dy,w:lw,h:dh});
+    const x=(padX+c*cellW)/W, y=(padY+r*cellH)/H, w=cellW/W, h=(0.8*cellH)/H;
+    roisDetect.push({x,y,w,h});
   }
-  boxConfig[box]={roisLabel, roisDetect}; localStorage.setItem('phonebox_config',JSON.stringify(boxConfig));
-  alert('Manual grid saved. Use Auto-calibrate for precise blue-pad alignment.');
+  boxConfig[box]={roisDetect}; localStorage.setItem('phonebox_config',JSON.stringify(boxConfig));
+  alert('Manual grid saved. Use Auto-calibrate to lock to blue pads.');
   drawOverlay();
 });
 
-/* ---------- Blue detection helpers ---------- */
+/* ---------- Blue detection & pad runs (NO splitting 10/11/12) ---------- */
 function downscale(img, maxW=900){
   const r=Math.min(1,maxW/img.naturalWidth);
   const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r);
@@ -379,7 +356,7 @@ async function findFiveBlueLines(canvas, sMin=0.35, vMin=0.25){
   const ctx=canvas.getContext('2d');
   const {data,width:W,height:H} = ctx.getImageData(0,0,canvas.width,canvas.height);
   const score=new Float32Array(H);
-  const x0=Math.round(W*0.08), x1=Math.round(W*0.92); // ignore extreme edges
+  const x0=Math.round(W*0.08), x1=Math.round(W*0.92);
   for(let y=0; y<H; y++){
     let sc=0;
     for(let x=x0; x<x1; x+=2){
@@ -408,13 +385,15 @@ async function findFiveBlueLines(canvas, sMin=0.35, vMin=0.25){
   return peaks;
 }
 
-// Column centers for 12 blue pads in a narrow band around y
-function find12CentersInBand(img, yCenter, bandHalf, sMin, vMin){
+function find12PadRunsInBand(img, yCenter, bandHalf, sMin, vMin){
   const {data,W,H} = img;
   const y0=Math.max(0, yCenter-bandHalf), y1=Math.min(H-1, yCenter+bandHalf);
-  const x0=Math.round(W*0.05), x1=Math.round(W*0.95);
+  const bandH = y1 - y0 + 1;
+  const xLeft=Math.round(W*0.05), xRight=Math.round(W*0.95);
+
+  // column blue count
   const col=new Float32Array(W).fill(0);
-  for(let x=x0; x<x1; x++){
+  for(let x=xLeft; x<=xRight; x++){
     let sc=0;
     for(let y=y0; y<=y1; y++){
       const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2];
@@ -424,26 +403,77 @@ function find12CentersInBand(img, yCenter, bandHalf, sMin, vMin){
     }
     col[x]=sc;
   }
-  const smooth = smooth1D(col, 6);
-  let peaks  = pickPeaks(smooth, 12, Math.round(W/16));
-  if(peaks.length>12){
-    // choose 12 best-separated left-to-right by keeping top scores but enforcing order
-    peaks = peaks.slice(0,12).sort((a,b)=>a-b);
+
+  // threshold to binary mask (dynamic by band height)
+  let thr = Math.max(1, Math.round(0.30*bandH));
+  for(let relax=0; relax<3; relax++){
+    const mask=new Uint8Array(W).fill(0);
+    for(let x=xLeft; x<=xRight; x++) mask[x] = col[x] >= thr ? 1 : 0;
+
+    // initial runs
+    let runs = runsFromMask(mask, xLeft, xRight);
+
+    // remove tiny runs and merge small gaps
+    const minW = Math.round(W*0.02);
+    const gapT = Math.round(W*0.01);
+    runs = runs.filter(r => (r.end - r.start + 1) >= minW);
+    runs = mergeSmallGaps(runs, gapT);
+
+    // if too many, merge closest until 12
+    if(runs.length > 12) runs = mergeToCountByGap(runs, 12);
+
+    if(runs.length === 12){
+      // compute centers from weighted columns (don’t split 10/11/12)
+      runs = runs.map(r=>{
+        let s=0,w=0; for(let x=r.start;x<=r.end;x++){ s+= x*col[x]; w+= col[x]; }
+        const center = w>0 ? s/w : Math.round((r.start+r.end)/2);
+        return {start:r.start, end:r.end, center};
+      });
+      return runs.sort((a,b)=>a.center-b.center);
+    }
+    // otherwise relax threshold and try again
+    thr = Math.max(1, Math.round(thr*0.88));
   }
-  if(peaks.length<12){
-    // slight relax: larger window
-    const smooth2=smooth1D(col, 10);
-    peaks=pickPeaks(smooth2, 12, Math.round(W/18));
+  return [];
+}
+
+function runsFromMask(mask, L, R){
+  const out=[];
+  let inRun=false, s=L;
+  for(let x=L; x<=R; x++){
+    if(mask[x] && !inRun){ inRun=true; s=x; }
+    if((!mask[x] || x===R) && inRun){
+      const e = (!mask[x] && x> L) ? x-1 : x;
+      out.push({start:s,end:e}); inRun=false;
+    }
   }
-  if(peaks.length!==12) return [];
-  // refine each center with local centroid in ±3 px window
-  const refined = peaks.map(px=>{
-    const left=Math.max(x0, px-3), right=Math.min(x1, px+3);
-    let s=0, w=0;
-    for(let x=left; x<=right; x++){ s += x*col[x]; w += col[x]; }
-    return w>0? s/w : px;
-  });
-  return refined.sort((a,b)=>a-b);
+  return out;
+}
+function mergeSmallGaps(runs, gapT){
+  if(runs.length<=1) return runs;
+  const out=[runs[0]];
+  for(let i=1;i<runs.length;i++){
+    const prev=out[out.length-1], cur=runs[i];
+    const gap = cur.start - prev.end - 1;
+    if(gap<=gapT){ // merge
+      prev.end = cur.end;
+    } else out.push(cur);
+  }
+  return out;
+}
+function mergeToCountByGap(runs, target){
+  runs=[...runs];
+  while(runs.length>target){
+    let bestI=-1, bestGap=1e9;
+    for(let i=0;i<runs.length-1;i++){
+      const gap = runs[i+1].start - runs[i].end - 1;
+      if(gap < bestGap){ bestGap=gap; bestI=i; }
+    }
+    // merge best pair
+    runs[bestI] = {start:runs[bestI].start, end:runs[bestI+1].end};
+    runs.splice(bestI+1,1);
+  }
+  return runs;
 }
 
 /* ---------- Embeddings + occupied/empty ---------- */
@@ -459,7 +489,7 @@ function cosSim(a,b){ let dot=0,na=0,nb=0; for(let i=0;i<a.length;i++){ dot+=a[i
 
 function slotOccupied(canvas){
   const ctx=canvas.getContext('2d');
-  // sample central band (avoid blue strip; our detection ROIs are already above it)
+  // sample central band (above numbers)
   const sx=Math.round(canvas.width*0.15), sy=Math.round(canvas.height*0.15);
   const sw=Math.round(canvas.width*0.70), sh=Math.round(canvas.height*0.60);
   const {data}=ctx.getImageData(sx,sy,sw,sh);
