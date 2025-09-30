@@ -165,7 +165,7 @@
 
 <script>
 /* ---------- Setup / UI ---------- */
-const BOX_IDS=[]; ['9','10','11','12'].forEach(g=>['A','B','C','D','E','F'].forEach(l=>BOX_IDS.push(\`\${g}\${l}\`)));
+const BOX_IDS=[]; ['9','10','11','12'].forEach(g=>['A','B','C','D','E','F'].forEach(l=>BOX_IDS.push(`${g}${l}`)));
 const gradeBoxes=document.getElementById('gradeBoxes'); BOX_IDS.forEach(id=>{const o=document.createElement('option');o.textContent=o.value=id;gradeBoxes.appendChild(o);});
 const photoInput=document.getElementById('photo'), preview=document.getElementById('preview'), overlay=document.getElementById('overlay');
 const statusEl=document.getElementById('status'), resultsBody=document.getElementById('resultsBody');
@@ -195,8 +195,8 @@ async function loadRoster(){
   });
 }
 function securityToBoxSlot(sec){
-  if(!sec) return null; const s=String(sec).replace(/\\s+/g,'').toUpperCase();
-  const m=s.match(/^(SM\\d|\\d{1,2}[A-F])[- ]?(\\d{1,2})$/);
+  if(!sec) return null; const s=String(sec).replace(/\s+/g,'').toUpperCase();
+  const m=s.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/);
   if(!m) return null; return {box:m[1], slot:parseInt(m[2],10)};
 }
 function rosterByBox(boxId){
@@ -205,12 +205,12 @@ function rosterByBox(boxId){
     if(info && info.box===boxId) map[info.slot]=row['Full Name'];
   } return map;
 }
-function drawGrid(namesBySlot={}){
+function drawGrid(namesBySlot={}) {
   boxGrid.innerHTML='';
   for(let r=0;r<5;r++) for(let c=0;c<12;c++){
     const idx=r*12+c+1;
     const d=document.createElement('div'); d.className='slot';
-    const s=document.createElement('span'); s.textContent=namesBySlot[idx]||\`#\${idx}\`;
+    const s=document.createElement('span'); s.textContent=namesBySlot[idx]||`#${idx}`;
     d.appendChild(s); boxGrid.appendChild(d);
   }
 }
@@ -596,7 +596,7 @@ async function analyze(){
   for(const r of records){
     const tr=document.createElement('tr');
     tr.className = r.status==='ok'?'ok':(r.status.includes('mismatch')?'mismatch':'');
-    tr.innerHTML=\`<td>\${r.slot}</td><td>\${r.expectedName||''}</td><td>\${r.detectedId||''}</td><td><span class="pill">\${r.status}</span></td>\`;
+    tr.innerHTML=`<td>${r.slot}</td><td>${r.expectedName||''}</td><td>${r.detectedId||''}</td><td><span class="pill">${r.status}</span></td>`;
     resultsBody.appendChild(tr);
   }
   lastRecords = records.map(r=>r);
@@ -612,8 +612,8 @@ async function autoDetectBox(){
     const worker = await Tesseract.createWorker('eng');
     const { data: { text } } = await worker.recognize(currentImage);
     await worker.terminate();
-    const m = text.toUpperCase().match(/(SM\\d|\\d{1,2}[A-F])\\s*-?\\s*\\d{1,2}/);
-    if(m){ document.getElementById('boxSelect').value=m[1]; drawGrid(rosterByBox(m[1])); statusEl.textContent=\`Detected box: \${m[1]}\`; }
+    const m = text.toUpperCase().match(/(SM\d|\d{1,2}[A-F])\s*-?\s*\d{1,2}/);
+    if(m){ document.getElementById('boxSelect').value=m[1]; drawGrid(rosterByBox(m[1])); statusEl.textContent=`Detected box: ${m[1]}`; }
     else  { statusEl.textContent='Could not auto-detect a box; please choose from the menu.'; }
   }catch(e){ statusEl.textContent='OCR error (continuing without auto-detect).'; }
 }
