@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box — Rows=Blue Bottom • Foam Walls • Green/Red (12×5)</title>
+<title>Phone Box — Blue ticks alignment • Green/Red overlay (12×5)</title>
 <style>
   :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0;--accent:#32d0ff}
   *{box-sizing:border-box}
@@ -18,9 +18,8 @@
   small{color:var(--muted)}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 
-  /* Preview panel */
+  /* Preview */
   #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0c1333;min-height:240px;touch-action:none}
-  /* The image is sized with object-fit:contain, but we size the stage to the image aspect so there’s no letterboxing. */
   #img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;z-index:0}
   #overlay{position:absolute;inset:0;pointer-events:none;z-index:1}
 
@@ -52,7 +51,7 @@
 </style>
 </head>
 <body>
-<header>📱 Phone Box — Blue strip = row bottom • Foam walls • Green/Red overlay</header>
+<header>📱 Phone Box — Align to white ticks on blue strip • 12×5</header>
 
 <main>
   <section class="card" id="left">
@@ -90,54 +89,41 @@
 
     <div class="row" style="margin-top:10px">
       <div>
-        <label>Row height % (above numbers)</label>
+        <label>Row height % (area ABOVE blue strip)</label>
         <input id="rowPct" type="range" min="45" max="95" step="5" value="70">
       </div>
       <div>
-        <label>Edge crop % (ignore sides)</label>
+        <label>Edge crop % (ignore left/right)</label>
         <input id="edgePct" type="range" min="0" max="15" step="1" value="5">
       </div>
     </div>
 
     <div class="row" style="margin-top:10px">
       <div>
-        <label>Foam scan height %</label>
-        <input id="foamPct" type="range" min="12" max="35" step="1" value="22">
+        <label>Blue sensitivity</label>
+        <input id="blueSens" type="range" min="10" max="90" step="5" value="45">
       </div>
       <div>
-        <label>Blue sensitivity</label>
-        <input id="blueSens" type="range" min="10" max="90" step="5" value="40">
+        <label>Tick sensitivity (white-on-blue)</label>
+        <input id="tickSens" type="range" min="10" max="90" step="5" value="55">
       </div>
     </div>
 
-    <!-- Physical model to set the side gap automatically -->
     <div class="row" style="margin-top:10px">
-      <div>
-        <label>Physical — Border (in)</label>
-        <input id="borderIn" type="number" step="0.1" value="1.5">
-      </div>
-      <div>
-        <label>Physical — Slot width (in)</label>
-        <input id="slotIn" type="number" step="0.1" value="0.5">
-      </div>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <div>
-        <label>Physical — Foam wall (in)</label>
-        <input id="foamIn" type="number" step="0.1" value="0.5">
-      </div>
       <div>
         <label>Guide opacity</label>
         <input id="guideAlpha" type="range" min="20" max="100" step="5" value="90">
       </div>
-    </div>
-
-    <div class="toolbar">
-      <button id="auto" class="primary">Auto Align</button>
-      <button id="tapRows">Quick Tap Rows</button>
-      <button id="resetRows">Reset Rows</button>
-      <button id="analyze" disabled>Colorize + Compare</button>
-      <label><input id="showGuides" type="checkbox" checked> Show guides</label>
+      <div>
+        <label>&nbsp;</label>
+        <div class="toolbar">
+          <button id="auto" class="primary">Auto Align</button>
+          <button id="tapRows">Quick Tap Rows</button>
+          <button id="resetRows">Reset Rows</button>
+          <button id="analyze" disabled>Colorize + Compare</button>
+          <label style="margin-left:8px"><input id="showGuides" type="checkbox" checked> Show guides</label>
+        </div>
+      </div>
     </div>
   </section>
 </main>
@@ -165,31 +151,26 @@ const showGuidesEl = document.getElementById('showGuides');
 
 const rowPctEl = document.getElementById('rowPct');
 const edgePctEl = document.getElementById('edgePct');
-const foamPctEl = document.getElementById('foamPct');
 const blueSensEl = document.getElementById('blueSens');
+const tickSensEl = document.getElementById('tickSens');
 const guideAlphaEl = document.getElementById('guideAlpha');
 
-const borderInEl = document.getElementById('borderIn');
-const slotInEl   = document.getElementById('slotIn');
-const foamInEl   = document.getElementById('foamIn');
-
 function setStatus(t){ statusEl.textContent=t||''; }
-function rowHeight(){ return +rowPctEl.value/100; }     // portion of the vertical gap to scan ABOVE the blue strip
-function edgeCrop(){ return +edgePctEl.value/100; }     // ignore left/right %
-function foamHeight(){ return +foamPctEl.value/100; }   // band height above numbers to find foam walls
+function rowHeight(){ return +rowPctEl.value/100; }     // scan band ABOVE the blue strip
+function edgeCrop(){ return +edgePctEl.value/100; }
 function blueSens(){ return +blueSensEl.value/100; }
+function tickSens(){ return +tickSensEl.value/100; }
 function guideAlpha(){ return +guideAlphaEl.value/100; }
 
 let current=null;         // {image, W, H}
 let roster=[];            // [{...}]
-let rowBottoms=[];        // 5 y positions (top edge of blue number strip) = BOTTOM of each row
-let boundsByRow=[];       // per row: 13 x-positions (foam walls)
+let rowBottoms=[];        // 5 y positions (top edge of blue strip)
+let boundsByRow=[];       // per row: 13 x-positions (slot walls)
 let rois=[];              // 60 rects
 let occMask=[];           // 60 booleans
 
 let quickTapActive=false;
 let quickTapYs=[];
-let physSideGap = 1.1;    // in "slot widths" (computed from inches below)
 
 /* ========= Boxes ========= */
 (function fillBoxes(){
@@ -275,26 +256,16 @@ window.addEventListener('resize', sizeStage);
 function sizeStage(){
   if(!current) return;
   const W=stage.clientWidth;
-  const H=Math.max(240, Math.round(W*(current.H/current.W)));  // match stage to image aspect so overlay == image pixels
+  const H=Math.max(240, Math.round(W*(current.H/current.W)));
   stage.style.height=H+'px';
   overlay.width=W; overlay.height=H;
 }
-
-/* ========= Physical model → side gap ========= */
-function updatePhysSideGap(){
-  const border=+borderInEl.value||1.5, slot=+slotInEl.value||0.5, foam=+foamInEl.value||0.5;
-  const period = Math.max(0.1, slot+foam);
-  physSideGap = Math.max(0.5, Math.min(2.5, border/period));
-  setStatus(`Side gap≈${physSideGap.toFixed(2)} slot widths`);
-}
-[borderInEl, slotInEl, foamInEl].forEach(el=>el.addEventListener('input', updatePhysSideGap));
-updatePhysSideGap();
 
 /* ========= Buttons ========= */
 autoBtn.addEventListener('click', async ()=>{
   if(!current){ alert('Upload a photo first.'); return; }
   analyzeBtn.disabled=true;
-  setStatus('Detecting number strips (row bottoms)…');
+  setStatus('Detecting blue strips (row bottoms)…');
   rowBottoms = await findNumberRowsUltra(current.image, edgeCrop(), blueSens());
   if(rowBottoms.length!==5){
     setStatus('Could not auto-detect 5 strips. Tap “Quick Tap Rows” and tap each blue strip once.');
@@ -313,11 +284,9 @@ resetRowsBtn.addEventListener('click', ()=>{
 
 analyzeBtn.addEventListener('click', ()=>{
   if(!rois.length) return alert('Align rows first.');
-  // Occupancy: compute + colorize
   occMask = rois.map(r => slotOccupied(cropROI(r)));
   paintOverlay(); // green/red fills
 
-  // Optional roster compare
   resultsBody.innerHTML='';
   const names = namesForBox(boxSel.value||'');
   drawNamesGrid(names);
@@ -329,7 +298,7 @@ analyzeBtn.addEventListener('click', ()=>{
     tr.innerHTML=`<td>${slot}</td><td>${expected}</td><td><span class="pill">${status}</span></td>`;
     resultsBody.appendChild(tr);
   }
-  // Tint the mini grid
+  // tint grid
   [...boxGrid.children].forEach((div,idx)=>{
     div.classList.remove('present','empty');
     div.classList.add( occMask[idx] ? 'present' : 'empty' );
@@ -348,7 +317,7 @@ stage.addEventListener('pointerdown', async (e)=>{
   }else{
     quickTapActive=false;
     rowBottoms = quickTapYs.slice().sort((a,b)=>a-b);
-    setStatus('Rows set. Locking to foam walls…');
+    setStatus('Rows set. Locking to ticks…');
     await continueFromRowBottoms();
   }
 });
@@ -365,25 +334,28 @@ async function continueFromRowBottoms(){
   const gaps=[]; for(let i=1;i<rowBottoms.length;i++) gaps.push(rowBottoms[i]-rowBottoms[i-1]);
   const avgGap = gaps.length ? gaps.reduce((a,b)=>a+b,0)/gaps.length : Math.round(current.H/6);
 
-  // Find 13 foam walls per row in a band JUST ABOVE each blue strip
   for(const yBottom of rowBottoms){
-    const bounds = await wallsFromFoam(current.image, yBottom, avgGap, edgeCrop(), foamHeight(), physSideGap);
+    // First try: align to white ticks inside the blue bar
+    let bounds = await wallsFromBlueTicks(current.image, yBottom, edgeCrop(), tickSens());
+    // Fallback: foam walls above the strip
+    if(!bounds || bounds.length!==13){
+      bounds = await wallsFromFoam(current.image, yBottom, avgGap, edgeCrop(), 0.22 /*foam band height*/, 1.1 /*side gap*/);
+    }
     boundsByRow.push(bounds);
   }
 
-  // Build ROIs strictly ABOVE the blue strip (bottom of row)
+  // Build ROIs strictly ABOVE the blue strip
   rois=[];
   for(let r=0;r<5;r++){
     const yBottom=rowBottoms[r];
-    const rowHeightPx = Math.max(12, Math.round(avgGap * rowHeight()));
-    const yTop = Math.max(0, yBottom - rowHeightPx);
+    const yTop = Math.max(0, yBottom - Math.max(12, Math.round(avgGap * rowHeight())));
     const b=boundsByRow[r];
     for(let i=0;i<12;i++){
       const x0=b[i], x1=b[i+1];
       rois.push({ x:x0, y:yTop, w:Math.max(1,(x1-x0)), h:Math.max(8, yBottom-yTop), row:r, col:i });
     }
   }
-  draw(); analyzeBtn.disabled=false; setStatus('Aligned. Tap “Colorize + Compare”.');
+  draw(); analyzeBtn.disabled=false; setStatus('Aligned to blue ticks. Tap “Colorize + Compare”.');
 }
 
 /* ========= Draw (guides) ========= */
@@ -392,14 +364,13 @@ function draw(){
   const sx=overlay.width/current.W, sy=overlay.height/current.H, a=guideAlpha();
 
   if(showGuidesEl.checked){
-    // cyan lines at row BOTTOMS (blue strips)
+    // cyan lines at row BOTTOMS
     ctx.strokeStyle=`rgba(50,208,255,${a})`; ctx.lineWidth=2;
     for(const y of rowBottoms){ ctx.beginPath(); ctx.moveTo(0,y*sy); ctx.lineTo(overlay.width,y*sy); ctx.stroke(); }
-    // labels
     ctx.fillStyle=`rgba(50,208,255,${a})`; ctx.font='12px system-ui';
-    for(const y of rowBottoms){ ctx.fillText('row bottom', 6, y*sy - 6); }
+    for(const y of rowBottoms){ ctx.fillText('bottom', 6, y*sy - 6); }
 
-    // white foam walls
+    // white vertical walls (should sit on white tick lines)
     ctx.strokeStyle=`rgba(255,255,255,${a})`; ctx.lineWidth=1.6;
     for(let r=0;r<boundsByRow.length;r++){
       const y=rowBottoms[r]*sy;
@@ -424,7 +395,7 @@ function paintOverlay(){
 }
 
 /* ========= Vision core ========= */
-/* Ultra: rows = blue AND digits (white OR dark) with multi-pass + spacing */
+/* (1) Find 5 blue bars = row bottoms */
 async function findNumberRowsUltra(imgEl, edge, sens){
   const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
@@ -452,13 +423,13 @@ async function findNumberRowsUltra(imgEl, edge, sens){
         const isBlue=(h>hueMin&&h<hueMax)&&s>=P.sMin&&v>=P.vMin;
         if(isBlue){
           b++;
-          if(s<=P.whiteS && v>=P.whiteV) w++;  // white digits on blue
-          if(v<=P.darkV) d++;                  // dark digits on blue
+          if(s<=P.whiteS && v>=P.whiteV) w++;
+          if(v<=P.darkV) d++;
           if(x+2<=x1){
             const j=(y*W+(x+2))*4;
             const L1=0.299*rr+0.587*gg+0.114*bb;
             const L2=0.299*data[j]+0.587*data[j+1]+0.114*data[j+2];
-            e += Math.abs(L2-L1);              // horizontal edges from numerals
+            e += Math.abs(L2-L1);
           }
         }
         cnt++;
@@ -495,7 +466,72 @@ async function findNumberRowsUltra(imgEl, edge, sens){
   return [];
 }
 
-/* Foam walls with period + physical side gap; scan ABOVE the blue bar */
+/* (2) Vertical walls from BLUE TICKS (preferred) */
+async function wallsFromBlueTicks(imgEl, yBottom, edge, tickSensitivity){
+  const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
+  const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
+  const im=g.getImageData(0,0,W,H), data=im.data;
+
+  const L=Math.round(W*edge), R=Math.round(W*(1-edge));
+  // Band **inside** the blue bar (a few pixels *below* yBottom)
+  const bandH = Math.max(8, Math.round(H*0.018)); // ~10–20 px depending on scale
+  const y0 = Math.min(H-2, Math.round(yBottom*r) + 2);
+  const y1 = Math.min(H-1, y0 + bandH);
+
+  // Build whiteness-on-blue score per x
+  const white=new Float32Array(W).fill(0);
+  for(let x=L;x<=R;x++){
+    let cnt=0, sc=0;
+    for(let y=y0;y<=y1;y++){
+      const i=(y*W+x)*4;
+      const rr=data[i], gg=data[i+1], bb=data[i+2];
+      const {h,s,v}=rgb2hsv(rr,gg,bb);
+      // "on blue bar": hue ~ blue, reasonably saturated, decent value
+      const onBlue = (h>190&&h<265)&&(v>0.20)&&(s>0.18);
+      if(onBlue){
+        // white tick lines: low saturation + high value
+        const isWhite = (s < (0.15 + 0.35*(1-tickSensitivity))) && (v > (0.75 - 0.25*(1-tickSensitivity)));
+        if(isWhite) sc++;
+        cnt++;
+      }
+    }
+    white[x] = cnt ? sc/cnt : 0;
+  }
+  const sw = smooth(white, 4);
+
+  // Estimate slot period (12 slots → 12 segments → ~ (R-L)/12)
+  const guess = (R-L)/12;
+  const per = findPeriod(sw, L, R, Math.max(8, Math.round(guess*0.7)), Math.round(guess*1.3));
+  if(!per || !isFinite(per)) return null;
+
+  // Choose start offset in [L..L+per) that maximizes whiteness at k*per positions (k=0..12)
+  let bestS=L, bestScore=-1;
+  for(let s=L; s<Math.min(R, L+per); s++){
+    let sc=0;
+    for(let k=0;k<=12;k++){
+      const x=Math.round(s + k*per);
+      if(x<L||x>R) continue;
+      // local max around column
+      let loc=sw[x];
+      if(x-2>=L) loc=Math.max(loc,sw[x-1],sw[x-2]);
+      if(x+2<=R) loc=Math.max(loc,sw[x+1],sw[x+2]);
+      sc+=loc;
+    }
+    if(sc>bestScore){ bestScore=sc; bestS=s; }
+  }
+
+  // Build 13 walls from the best starting offset + period
+  const walls=[];
+  for(let k=0;k<=12;k++){
+    walls.push( clamp(Math.round(bestS + k*per), L, R) );
+  }
+  const scaleX = imgEl.naturalWidth/W;
+  return walls.map(x=>Math.round(x*scaleX));
+}
+
+/* (3) Fallback: foam walls above the strip (kept from earlier) */
 async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
   const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
@@ -503,13 +539,12 @@ async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
   const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
   const im=g.getImageData(0,0,W,H);
 
-  // band immediately ABOVE the numbers: [y0..y1], with y1 just above the strip
+  // band immediately ABOVE the numbers
   const bandH=Math.max(8,Math.round((avgGap*r)*foamFrac));
   const y1=Math.min(H-1, Math.round((yBottom*r) - 2));
   const y0=Math.max(0, y1 - bandH);
 
   const L=Math.round(W*edge), R=Math.round(W*(1-edge));
-
   const bright=new Float32Array(W).fill(0), grad=new Float32Array(W).fill(0);
   for(let x=L;x<=R;x++){
     let s=0; for(let y=y0;y<=y1;y++){ const i=(y*W+x)*4; s += 0.299*im.data[i]+0.587*im.data[i+1]+0.114*im.data[i+2]; }
@@ -518,12 +553,9 @@ async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
   for(let x=L+1;x<=R-1;x++){ grad[x]=Math.abs(bright[x+1]-bright[x-1]); }
   const signal=smooth(grad,8);
 
-  const width=R-L;
-  const guess=width/13;
+  const width=R-L, guess=width/13;
   const period = findPeriod(signal, L, R, Math.round(guess*0.8), Math.round(guess*1.3));
-
-  // Use “slot widths” side gap derived from inches (border / (slot+foam))
-  const start0 = L + sideGapW*period;
+  const start0 = L + (sideGapW||1.1)*period;
 
   let bestS=start0, bestScore=-1;
   const search=Math.round(period*0.45);
@@ -546,7 +578,7 @@ async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
   return walls.map(x=>Math.round(x*scaleX));
 }
 
-/* Occupancy detection (dark vertical run) */
+/* (4) Occupancy detection */
 function cropROI(r){
   const c=document.createElement('canvas'); c.width=r.w; c.height=r.h;
   c.getContext('2d').drawImage(current.image, r.x,r.y,r.w,r.h, 0,0,r.w,r.h);
@@ -595,10 +627,6 @@ function screenToImage(cx,cy){
 }
 
 /* ========= Boot ========= */
-(function initUI(){
-  // initial side-gap suggestion from inches
-  updatePhysSideGap();
-})();
 (function drawNamesGridEmpty(){ boxGrid.innerHTML=''; for(let r=0;r<5;r++){ for(let c=0;c<12;c++){ const d=document.createElement('div'); d.className='slot'; const s=document.createElement('span'); s.textContent=`#${r*12+c+1}`; d.appendChild(s); boxGrid.appendChild(d);} }})();
 </script>
 </body>
