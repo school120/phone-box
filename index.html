@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box — Auto Rows + Foam Walls + Roster (12×5)</title>
+<title>Phone Box — Reliable Rows + Quick Tap + Roster (12×5)</title>
 <style>
   :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0;--accent:#32d0ff}
   *{box-sizing:border-box}
@@ -40,7 +40,7 @@
 </style>
 </head>
 <body>
-<header>📱 Phone Box — Auto Rows + Foam Walls + Roster (12×5)</header>
+<header>📱 Phone Box — Reliable Rows + Quick Tap + Roster (12×5)</header>
 
 <main>
   <section class="card" id="left">
@@ -87,7 +87,7 @@
       </div>
       <div>
         <label>Blue sensitivity</label>
-        <input id="blueSens" type="range" min="10" max="90" step="5" value="35">
+        <input id="blueSens" type="range" min="10" max="90" step="5" value="40">
       </div>
     </div>
 
@@ -104,6 +104,8 @@
 
     <div class="toolbar">
       <button id="auto" class="primary">Auto Align</button>
+      <button id="tapRows">Quick Tap Rows</button>
+      <button id="resetRows">Reset Rows</button>
       <button id="analyze" disabled>Analyze & Compare</button>
       <label><input id="showGuides" type="checkbox" checked> Show guides</label>
       <span id="status" class="pill"></span>
@@ -127,6 +129,8 @@ const statusEl = document.getElementById('status');
 
 const photo = document.getElementById('photo');
 const autoBtn = document.getElementById('auto');
+const tapRowsBtn = document.getElementById('tapRows');
+const resetRowsBtn = document.getElementById('resetRows');
 const analyzeBtn = document.getElementById('analyze');
 const showGuidesEl = document.getElementById('showGuides');
 
@@ -151,6 +155,9 @@ let rowTops=[];           // 5 y positions (top edge of blue number strip)
 let boundsByRow=[];       // per row: 13 x-positions (foam walls)
 let rois=[];              // 60 rects
 
+let quickTapActive=false;
+let quickTapYs=[];
+
 /* ===== Boxes ===== */
 (function fillBoxes(){
   const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
@@ -159,7 +166,7 @@ let rois=[];              // 60 rects
   boxSel.innerHTML = ids.map(x=>`<option>${x}</option>`).join('');
 })();
 
-/* ===== CSV (tiny parser) ===== */
+/* ===== CSV (tiny) ===== */
 function parseCSV(text){
   const rows=[]; let row=[], cur='', inQ=false; const push=()=>{row.push(cur);cur='';};
   for(let i=0;i<text.length;i++){
@@ -174,15 +181,14 @@ function parseCSV(text){
 }
 function loadRosterFromRepo(){
   rosterStatus.textContent='Loading /data/roster.csv…';
-  // try relative first, then absolute root
-  const tryPaths = ['./data/roster.csv','/data/roster.csv'];
+  const tries=['./data/roster.csv','/data/roster.csv'];
   (async ()=>{
-    for(const p of tryPaths){
+    for(const p of tries){
       try{
-        const res = await fetch(p, {cache:'no-store'});
+        const res = await fetch(p,{cache:'no-store'});
         if(res.ok){
-          const txt = await res.text();
-          roster = parseCSV(txt);
+          const txt=await res.text();
+          roster=parseCSV(txt);
           rosterStatus.textContent='Loaded /data/roster.csv ✓';
           return;
         }
@@ -192,6 +198,7 @@ function loadRosterFromRepo(){
   })();
 }
 loadRosterFromRepo();
+
 rosterFile.addEventListener('change', ()=>{
   const f=rosterFile.files[0]; if(!f) return;
   const r=new FileReader();
@@ -218,49 +225,38 @@ function drawNamesGrid(namesBySlot={}){
 photo.addEventListener('change', e=>{
   const f=e.target.files[0]; if(!f) return;
   const url=URL.createObjectURL(f); const im=new Image();
-  im.onload=()=>{ current={image:im,W:im.naturalWidth,H:im.naturalHeight}; img.src=url; img.style.display='block'; sizeStage(); draw(); setStatus('Photo loaded. Tap “Auto Align”.'); };
+  im.onload=()=>{ current={image:im,W:im.naturalWidth,H:im.naturalHeight}; img.src=url; img.style.display='block'; sizeStage(); draw(); setStatus('Photo loaded. Use Auto Align or Quick Tap Rows.'); };
   im.onerror=()=>setStatus('Could not load image.'); im.src=url;
 });
 window.addEventListener('resize', sizeStage);
 function sizeStage(){ if(!current) return; const W=stage.clientWidth; const H=Math.max(220,Math.round(W*(current.H/current.W))); stage.style.height=H+'px'; overlay.width=W; overlay.height=H; }
 
-/* ===== Auto align ===== */
+/* ===== Buttons ===== */
 autoBtn.addEventListener('click', async ()=>{
   if(!current){ alert('Upload a photo first.'); return; }
+  analyzeBtn.disabled=true;
   setStatus('Detecting number strips…');
-
-  rowTops = await findNumberRowsRobust(current.image, edgeCrop(), blueSens());
+  rowTops = await findNumberRowsUltra(current.image, edgeCrop(), blueSens());
   if(rowTops.length!==5){
-    setStatus('Could not find 5 number strips. Try raising Blue sensitivity and/or Edge crop %.');
+    setStatus('Could not auto-detect 5 number strips. Tap “Quick Tap Rows” and tap each blue strip once.');
     draw(); return;
   }
-
-  setStatus('Locking to foam walls…');
-  boundsByRow=[]; const gaps=[]; for(let i=1;i<rowTops.length;i++) gaps.push(rowTops[i]-rowTops[i-1]);
-  const avgGap=gaps.reduce((a,b)=>a+b,0)/gaps.length;
-
-  for(const yBottom of rowTops){
-    const bounds = await wallsFromFoam(current.image, yBottom, avgGap, edgeCrop(), foamHeight(), sideGapSlots());
-    boundsByRow.push(bounds);
-  }
-
-  // Build ROIs (above each blue strip)
-  rois=[];
-  for(let r=0;r<5;r++){
-    const yBottom=rowTops[r];
-    const yTop=Math.max(0, Math.round(yBottom-avgGap*rowHeight()));
-    const b=boundsByRow[r];
-    for(let i=0;i<12;i++){ const x0=b[i], x1=b[i+1]; rois.push({x:x0,y:yTop,w:Math.max(1,(x1-x0)),h:yBottom-yTop,row:r,col:i}); }
-  }
-  draw(); analyzeBtn.disabled=false; setStatus('Aligned. Tap “Analyze & Compare”.');
+  await continueFromRowTops();
 });
 
-/* ===== Analyze ===== */
+tapRowsBtn.addEventListener('click', ()=>{
+  if(!current){ alert('Upload a photo first.'); return; }
+  quickTapActive=true; quickTapYs=[]; setStatus('Tap each blue number strip once (5 taps total)…');
+});
+
+resetRowsBtn.addEventListener('click', ()=>{
+  rowTops=[]; boundsByRow=[]; rois=[]; draw(); setStatus('Rows cleared.');
+});
+
 analyzeBtn.addEventListener('click', ()=>{
-  if(!rois.length) return alert('Auto Align first.');
+  if(!rois.length) return alert('Align rows first.');
   if(!boxSel.value) return alert('Choose a Box (e.g., 9B, 10C, SM1).');
   if(!roster || roster.length===0) return alert('Load the roster CSV.');
-
   const names=namesForBox(boxSel.value); drawNamesGrid(names);
   const rows=[];
   for(let i=0;i<rois.length;i++){
@@ -268,9 +264,60 @@ analyzeBtn.addEventListener('click', ()=>{
     const status = occ ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
     rows.push({slot,expected,status});
   }
-  resultsBody.innerHTML=''; rows.forEach(r=>{ const tr=document.createElement('tr'); tr.className = r.status==='missing'?'missing':(r.status==='present'?'ok':''); tr.innerHTML=`<td>${r.slot}</td><td>${r.expected||''}</td><td><span class="pill">${r.status}</span></td>`; resultsBody.appendChild(tr); });
+  resultsBody.innerHTML='';
+  rows.forEach(r=>{
+    const tr=document.createElement('tr');
+    tr.className = r.status==='missing'?'missing':(r.status==='present'?'ok':'');
+    tr.innerHTML=`<td>${r.slot}</td><td>${r.expected||''}</td><td><span class="pill">${r.status}</span></td>`;
+    resultsBody.appendChild(tr);
+  });
   setStatus('Compared to roster.');
 });
+
+/* ===== Stage interactions (Quick Tap) ===== */
+stage.addEventListener('pointerdown', async (e)=>{
+  if(!quickTapActive || !current) return;
+  const {iy}=screenToImage(e.clientX,e.clientY);
+  quickTapYs.push(iy);
+  drawTapMarker(iy);
+  if(quickTapYs.length<5){
+    setStatus(`Tap noted (${quickTapYs.length}/5). Tap the next blue strip…`);
+  }else{
+    quickTapActive=false;
+    rowTops = quickTapYs.slice().sort((a,b)=>a-b);
+    setStatus('Rows set. Locking to foam walls…');
+    await continueFromRowTops();
+  }
+});
+
+function drawTapMarker(yImg){
+  const sy=overlay.height/current.H;
+  const y=yImg*sy;
+  ctx.save();
+  ctx.strokeStyle='rgba(50,208,255,.9)';
+  ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(overlay.width,y); ctx.stroke();
+  ctx.restore();
+}
+
+/* ===== Continue pipeline once we have rowTops ===== */
+async function continueFromRowTops(){
+  boundsByRow=[]; rois=[];
+  const gaps=[]; for(let i=1;i<rowTops.length;i++) gaps.push(rowTops[i]-rowTops[i-1]);
+  const avgGap=gaps.reduce((a,b)=>a+b,0)/gaps.length;
+
+  for(const yBottom of rowTops){
+    const bounds = await wallsFromFoam(current.image, yBottom, avgGap, edgeCrop(), foamHeight(), sideGapSlots());
+    boundsByRow.push(bounds);
+  }
+  for(let r=0;r<5;r++){
+    const yBottom=rowTops[r];
+    const yTop=Math.max(0, Math.round(yBottom-avgGap*rowHeight()));
+    const b=boundsByRow[r];
+    for(let i=0;i<12;i++){ const x0=b[i], x1=b[i+1]; rois.push({x:x0,y:yTop,w:Math.max(1,(x1-x0)),h:yBottom-yTop,row:r,col:i}); }
+  }
+  draw(); analyzeBtn.disabled=false; setStatus('Aligned. Tap “Analyze & Compare”.');
+}
 
 /* ===== Draw ===== */
 function draw(){
@@ -290,61 +337,78 @@ function draw(){
 }
 
 /* ===== Vision core ===== */
-/* Robust: find 5 rows that are blue AND contain white digits; adapt thresholds */
-async function findNumberRowsRobust(imgEl, edge, sens){
-  const maxW=1400, r=Math.min(1,maxW/imgEl.naturalWidth);
+/* Ultra: rows = blue AND digits (white OR dark) with multi-pass + period repair */
+async function findNumberRowsUltra(imgEl, edge, sens){
+  const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
   const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
   const im=g.getImageData(0,0,W,H), data=im.data;
 
   const x0=Math.round(W*edge), x1=Math.round(W*(1-edge));
-  // iterate with relaxed thresholds if needed
   const passes=[
-    {sMin:0.30, vMin:0.28 + sens*0.30, whiteV:0.80, whiteS:0.28},
-    {sMin:0.25, vMin:0.22 + sens*0.20, whiteV:0.75, whiteS:0.32},
-    {sMin:0.20, vMin:0.18 + sens*0.10, whiteV:0.70, whiteS:0.35}
+    {sMin:0.32, vMin:0.30 + sens*0.30, whiteV:0.80, whiteS:0.30, darkV:0.22},
+    {sMin:0.26, vMin:0.24 + sens*0.20, whiteV:0.76, whiteS:0.34, darkV:0.25},
+    {sMin:0.20, vMin:0.18 + sens*0.10, whiteV:0.72, whiteS:0.36, darkV:0.28},
   ];
-  for(const P of passes){
-    const hueMin=190, hueMax=265;
-    const blueFrac=new Float32Array(H), whiteOnBlue=new Float32Array(H);
-    const top= Math.round(H*0.04), bottom=Math.round(H*0.96); // ignore outer 4%
+  const hueMin=190, hueMax=265;
+  const topCut=Math.round(H*0.04), botCut=Math.round(H*0.96);
 
-    for(let y=top;y<bottom;y++){
-      let cnt=0, blue=0, white=0;
+  for(const P of passes){
+    const blue=new Float32Array(H), whiteOnBlue=new Float32Array(H), darkOnBlue=new Float32Array(H), edgeMag=new Float32Array(H);
+    for(let y=topCut;y<botCut;y++){
+      let cnt=0, b=0, w=0, d=0, e=0;
       for(let x=x0;x<=x1;x+=2){
-        const i=(y*W+x)*4; const rr=data[i], gg=data[i+1], bb=data[i+2];
+        const i=(y*W+x)*4;
+        const rr=data[i], gg=data[i+1], bb=data[i+2];
         const {h,s,v}=rgb2hsv(rr,gg,bb);
         const isBlue=(h>hueMin&&h<hueMax)&&s>=P.sMin&&v>=P.vMin;
         if(isBlue){
-          blue++;
-          if(s<=P.whiteS && v>=P.whiteV) white++; // bright, low-sat digits ON blue
+          b++;
+          if(s<=P.whiteS && v>=P.whiteV) w++;     // white digits on blue
+          if(v<=P.darkV) d++;                      // dark digits on blue (shadow/ink)
+          // simple horizontal edge estimate (blue row has number edges)
+          if(x+2<=x1){
+            const j=(y*W+(x+2))*4;
+            const L1=0.299*rr+0.587*gg+0.114*bb;
+            const L2=0.299*data[j]+0.587*data[j+1]+0.114*data[j+2];
+            e += Math.abs(L2-L1);
+          }
         }
         cnt++;
       }
-      blueFrac[y]=cnt?blue/cnt:0;
-      whiteOnBlue[y]=cnt?white/cnt:0;
+      blue[y]=cnt?b/cnt:0;
+      whiteOnBlue[y]=cnt?w/cnt:0;
+      darkOnBlue[y]=cnt?d/cnt:0;
+      edgeMag[y]=cnt?e/cnt:0;
     }
-    const sb = smooth(blueFrac,7);
-    const sw = smooth(whiteOnBlue,7);
+    const sb=smooth(blue,7), sw=smooth(whiteOnBlue,7), sd=smooth(darkOnBlue,7), se=smooth(edgeMag,7);
 
-    // combined score: blue * (normalized white)
-    const maxWht = Math.max(...sw); const score=new Float32Array(H);
-    for(let y=0;y<H;y++){ score[y] = sb[y] * (maxWht? (sw[y]/maxWht) : 0); }
+    // combined row score: blue * (digits OR edges)
+    let maxWht=0; for(const v of sw) if(v>maxWht) maxWht=v;
+    let maxDrk=0; for(const v of sd) if(v>maxDrk) maxDrk=v;
+    let maxEdg=0; for(const v of se) if(v>maxEdg) maxEdg=v;
 
-    // auto threshold + non-max suppression
-    const m = Math.max(...score);
-    if(!m || m<1e-6) continue;
-    const rawPeaks = [];
-    for(let y=top+2;y<bottom-2;y++){
-      if(score[y]>0.35*m && score[y]>score[y-1] && score[y]>=score[y+1]) rawPeaks.push(y);
+    const score=new Float32Array(H);
+    for(let y=0;y<H;y++){
+      const digits = Math.max( maxWht?sw[y]/maxWht:0, maxDrk?sd[y]/maxDrk:0 );
+      const edges  = maxEdg?se[y]/maxEdg:0;
+      score[y] = sb[y] * Math.max(digits, edges*0.7);
     }
-    // prefer 5 roughly spaced
-    const rows = pickSpread(rawPeaks, 5, Math.round(H/7));
+
+    let rows = pickSpread(peaksAbove(score, 0.35), 5, Math.round(H/7));
+    // repair with period if <5
+    if(rows.length<5){
+      const per = estimatePeriod(score, Math.round(H/8), Math.round(H/4));
+      if(per>0){
+        const center = Math.round(H/2);
+        const start = center - Math.round(per*2);
+        rows = Array.from({length:5},(_,i)=> clamp(start + Math.round(i*per), topCut+5, botCut-5));
+      }
+    }
     if(rows.length>=5){
-      // refine each to the top edge of the blue band
+      // refine to top edge of blue band
       const refined = rows.slice(0,5).sort((a,b)=>a-b).map(p=>{
-        // follow upward until score drops to 50% of local max
-        const win=8; let M=0; for(let y=Math.max(0,p-win); y<=Math.min(H-1,p+win); y++) M=Math.max(M, sb[y]);
+        const win=10; let M=0; for(let y=Math.max(0,p-win); y<=Math.min(H-1,p+win); y++) M=Math.max(M, sb[y]);
         const T=M*0.5; let topy=p; for(let y=p;y>=0;y--){ if(sb[y]>=T) topy=y; else break; }
         return Math.round(topy/r);
       });
@@ -353,28 +417,31 @@ async function findNumberRowsRobust(imgEl, edge, sens){
   }
   return [];
 }
+function peaksAbove(series, frac){
+  const m=Math.max(...series); const out=[];
+  if(!m) return out;
+  for(let y=1;y<series.length-1;y++){
+    if(series[y]>=frac*m && series[y]>=series[y-1] && series[y]>=series[y+1]) out.push(y);
+  }
+  return out;
+}
 function pickSpread(peaks, need, minDist){
   const out=[];
-  for(const p of peaks){
-    if(out.every(q=>Math.abs(q-p)>minDist)) out.push(p);
-    if(out.length>=need) break;
+  for(const p of peaks){ if(out.every(q=>Math.abs(q-p)>minDist)) out.push(p); if(out.length>=need) break; }
+  return out.sort((a,b)=>a-b);
+}
+function estimatePeriod(arr, minLag, maxLag){
+  let bestLag=0, best=-1;
+  for(let lag=minLag; lag<=maxLag; lag++){
+    let s=0; for(let i=0;i+lag<arr.length;i++) s+=arr[i]*arr[i+lag];
+    if(s>best){ best=s; bestLag=lag; }
   }
-  // If still short, greedily add remaining farthest
-  while(out.length<need && peaks.length){
-    let best=null, bestd=-1;
-    for(const p of peaks){
-      const d = out.length? Math.min(...out.map(q=>Math.abs(q-p))) : 1e9;
-      if(d>bestd){bestd=d; best=p;}
-    }
-    if(best!=null){ out.push(best); peaks.splice(peaks.indexOf(best),1); }
-    else break;
-  }
-  return out.sort((a,b)=>a-b).slice(0,need);
+  return bestLag;
 }
 
-/* Foam walls with period + side-gap control */
+/* Foam walls with period + side-gap (same as before) */
 async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
-  const maxW=1400, r=Math.min(1,maxW/imgEl.naturalWidth);
+  const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
   const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
   const im=g.getImageData(0,0,W,H);
@@ -383,7 +450,6 @@ async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
   const y0=Math.max(0, Math.round((yBottom*r)-bandH-4)), y1=Math.min(H-1, Math.round((yBottom*r)-2));
   const L=Math.round(W*edge), R=Math.round(W*(1-edge));
 
-  // brightness & gradient per column inside foam band
   const bright=new Float32Array(W).fill(0), grad=new Float32Array(W).fill(0);
   for(let x=L;x<=R;x++){
     let s=0; for(let y=y0;y<=y1;y++){ const i=(y*W+x)*4; s += 0.299*im.data[i]+0.587*im.data[i+1]+0.114*im.data[i+2]; }
@@ -394,11 +460,8 @@ async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
 
   const width=R-L, guess=width/13;
   const period = findPeriod(signal, L, R, Math.round(guess*0.8), Math.round(guess*1.3));
-
-  // first wall offset using side gap in slot widths
   const start0 = L + sideGapW*period;
 
-  // refine start by maximizing energy at k*period
   let bestS=start0, bestScore=-1;
   const search=Math.round(period*0.4);
   for(let s=Math.max(L,start0-search); s<=Math.min(R,start0+search); s++){
@@ -413,7 +476,6 @@ async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
     if(sc>bestScore){ bestScore=sc; bestS=s; }
   }
 
-  // build 13 walls and clamp
   let walls=[]; for(let k=0;k<13;k++){ walls.push(clamp(Math.round(bestS + k*period), L, R)); }
   for(let i=1;i<walls.length;i++){ if(walls[i]<=walls[i-1]) walls[i]=walls[i-1]+1; }
 
@@ -443,7 +505,12 @@ function slotOccupied(c){
 function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0)h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
 function smooth(a,w){const o=new Float32Array(a.length); for(let i=0;i<a.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=a.length) continue; s+=a[j]; c++;} o[i]=s/c;} return o;}
 function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
-function avg(a,s,e){ let sum=0,c=0; for(let i=s;i<=e;i++){sum+=a[i];c++;} return c?sum/c:0; }
+function screenToImage(cx,cy){
+  const r=overlay.getBoundingClientRect();
+  const x=(cx-r.left)/r.width*current.W;
+  const y=(cy-r.top)/r.height*current.H;
+  return {ix:x, iy:y};
+}
 function findPeriod(sig,L,R,lagMin,lagMax){
   let bestLag=lagMin, best=-1;
   for(let lag=lagMin; lag<=lagMax; lag++){
