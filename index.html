@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>Phone Box Checker — Projection + Debug Mask + Roster</title>
+  <title>Phone Box Checker — Projection Detector + Blue Mask Debug</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .card{ background:#fff; border-radius:1rem; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:1rem; }
@@ -15,42 +15,30 @@
     .slider{ width:160px; }
     .badge{ display:inline-block; padding:.15rem .5rem; border-radius:.5rem; font-size:.75rem; }
   </style>
-  <!-- CSV parser -->
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-  <!-- React -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <!-- OpenCV -->
   <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 </head>
 <body class="min-h-screen bg-gray-50 text-gray-900">
   <div id="root" class="p-4 sm:p-6"></div>
 
   <script>
-  const { useEffect, useRef, useState, useMemo } = React;
+  const { useEffect, useRef, useState } = React;
 
-  // ========== ROSTER HELPERS ========== 
-  function parseSecurityNumber(sn=''){
-    const s=String(sn).trim().toUpperCase(); if(!s) return null;
-    let m=s.match(/^\s*(SM\d+)\s*[- ]?\s*(\d{1,2})\s*$/); if(m) return {box:m[1], slot:+m[2]};
-    m=s.match(/^([0-9]{1,2}[A-F])\s*(\d{1,2})$/); if(m) return {box:m[1], slot:+m[2]};
-    m=s.match(/^(.*?)(\d{1,2})$/); if(!m) return null; const box=m[1]; const slot=+m[2]; if(slot<1||slot>60) return null; return {box,slot};
-  }
-  function uniqueBoxes(roster){ const set=new Set(); roster.forEach(r=>{ const p=parseSecurityNumber(r.securityNumber); if(p) set.add(p.box); }); return [...set].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})); }
-
-  // ========== VISION UTILS ========== 
-  function robustThreshold(vals){
-    const a=[...vals]; a.sort((x,y)=>x-y); const n=a.length||1;
+  // ========= Utils =========
+  function robustThreshold(values){
+    const a=[...values].sort((x,y)=>x-y); const n=a.length; if(!n) return 0.02;
     const med=n%2? a[(n-1)/2] : (a[n/2-1]+a[n/2])/2;
     const ad=a.map(v=>Math.abs(v-med)).sort((x,y)=>x-y);
     const mad=n%2? ad[(n-1)/2] : (ad[n/2-1]+ad[n/2])/2;
-    let t = med + 1.5*mad; if(!isFinite(t)||t<=0) t = med*1.25 + 0.003; return Math.min(Math.max(t, med*1.05), med+0.05);
+    let t=med+1.5*mad; if(!isFinite(t)||t<=0) t=med*1.25+0.003; return Math.min(Math.max(t, med*1.05), med+0.05);
   }
 
   function drawOverlay(imgEl, overlayCanvas, W, H, slots, bands){
     const ov=overlayCanvas; const dispW=imgEl.clientWidth, dispH=imgEl.clientHeight; ov.width=dispW; ov.height=dispH;
     const sx=dispW/W, sy=dispH/H; const ctx=ov.getContext('2d'); ctx.clearRect(0,0,ov.width,ov.height);
     ctx.lineWidth=2; ctx.font='10px sans-serif'; ctx.textBaseline='top';
+    // Slots
     slots.forEach((s,i)=>{
       const px=s.x*sx, py=s.y*sy, pw=s.w*sx, ph=s.h*sy;
       ctx.strokeStyle = s.present? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
@@ -58,17 +46,19 @@
       ctx.fillStyle = s.present? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
       ctx.fillRect(px+2,py+2,20,12); ctx.fillStyle='#fff'; ctx.fillText(String(i+1), px+6, py+3);
     });
-    const yctx=ctx; yctx.strokeStyle='rgba(240,200,0,0.95)';
-    bands.forEach(b=> yctx.strokeRect(b.x*sx, b.y*sy, b.w*sx, b.h*sy));
+    // Yellow bands
+    ctx.strokeStyle='rgba(240,200,0,0.95)';
+    bands.forEach(b=> ctx.strokeRect(b.x*sx, b.y*sy, b.w*sx, b.h*sy));
   }
 
+  // Simple non‑max suppression peak picker
   function findPeaks(arr, minVal, minDist){
-    const idx = Array.from(arr.keys()); idx.sort((a,b)=>arr[b]-arr[a]);
+    const idx = Array.from(arr.keys()).sort((a,b)=>arr[b]-arr[a]);
     const picked=[]; for(const i of idx){ if(arr[i] < minVal) break; if(picked.every(j=>Math.abs(j-i)>=minDist)) picked.push(i); }
     picked.sort((a,b)=>a-b); return picked;
   }
 
-  // Projection-based detector; returns barsY & 12-ish col centers + mask Mats to preview
+  // ======== Projection detector that also returns the blue mask (for debug) ========
   function detectRowsAndColumns(cv, src, W, H, hsvRange){
     const hsv=new cv.Mat(); cv.cvtColor(src,hsv,cv.COLOR_RGBA2HSV);
     const low=new cv.Mat(hsv.rows,hsv.cols,hsv.type(), [hsvRange.hMin, hsvRange.sMin, hsvRange.vMin, 0]);
@@ -76,16 +66,17 @@
     const mask=new cv.Mat(); cv.inRange(hsv, low, high, mask);
     const k=cv.Mat.ones(3,3,cv.CV_8U); cv.morphologyEx(mask, mask, cv.MORPH_OPEN, k); cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, k);
 
+    // Row projection
     const rowSum = new Float32Array(H);
     for (let y=0; y<H; y++){ const row = mask.row(y); rowSum[y] = cv.countNonZero(row); }
     for (let y=1; y<H-1; y++) rowSum[y] = (rowSum[y-1] + rowSum[y] + rowSum[y+1]) / 3;
-    const minRowBlue = 0.02 * W;
+    const minRowBlue = 0.02 * W; // ~2% blue pixels across row
     let barsY = findPeaks(rowSum, minRowBlue, Math.round(H*0.08)).slice(0,5);
 
+    // Column projection around best row
     let colCenters=[];
     if (barsY.length){
-      let bestRow=barsY[0], bestVal=rowSum[bestRow];
-      for (const r of barsY){ if(rowSum[r] > bestVal){ bestRow=r; bestVal=rowSum[r]; } }
+      let bestRow=barsY[0], bestVal=rowSum[bestRow]; for (const r of barsY){ if(rowSum[r] > bestVal){ bestRow=r; bestVal=rowSum[r]; } }
       const bandHalf = Math.max(6, Math.round(H*0.015));
       const y0 = Math.max(0, bestRow-bandHalf), y1=Math.min(H-1, bestRow+bandHalf);
       const colSum = new Float32Array(W);
@@ -99,6 +90,7 @@
         colCenters = colPeaks.sort((a,b)=>a-b);
       }
     } else {
+      // Fallback so overlay still appears
       barsY = Array.from({length:5},(_,i)=> (H*0.20) + i*(H*0.13));
       const step=W/12; colCenters = Array.from({length:12},(_,i)=>(i+0.5)*step);
     }
@@ -132,24 +124,23 @@
   }
 
   function App(){
+    // Readiness
     const [cvReady,setCvReady]=useState(false);
-    const [imgReady,setImgReady]=useState(false);
 
-    const [roster,setRoster]=useState([]);
-    const [box,setBox]=useState('');
+    // UI state
+    const [imageURL,setImageURL]=useState(null);
+    const [busy,setBusy]=useState(false);
+    const [stats,setStats]=useState(null);
+    const [showMask,setShowMask]=useState(true);
 
+    // Vision params (tuned for your photos)
     const [hsvRange,setHsvRange]=useState({ hMin:90, hMax:140, sMin:40, vMin:40 });
     const [bandPct,setBandPct]=useState(0.22);
     const [marginPct,setMarginPct]=useState(0.06);
 
-    const [imageURL,setImageURL]=useState(null);
-    const [busy,setBusy]=useState(false);
-    const [stats,setStats]=useState(null);
-    const [missing,setMissing]=useState([]);
-    const [showMask,setShowMask]=useState(false);
-
     const imgRef=useRef(null); const workRef=useRef(null); const overlayRef=useRef(null); const maskRef=useRef(null);
 
+    // Wait for OpenCV to be ready
     useEffect(()=>{
       if (window.cv && window.cv.onRuntimeInitialized !== undefined){
         window.cv.onRuntimeInitialized = ()=> setCvReady(true);
@@ -158,33 +149,22 @@
       }
     },[]);
 
-    useEffect(()=>{ (async()=>{ try{ const r=await fetch('roster.csv',{cache:'no-store'}); if(r.ok){ const t=await r.text(); const p=Papa.parse(t,{header:true,skipEmptyLines:true}); const rows=p.data.map(x=>({ personId:String(x['Person ID']||x.personId||'').trim(), fullName:String(x['Full Name']||x.fullName||'').trim(), securityNumber:String(x['Security Number']||x.securityNumber||'').trim(), grade:String(x['Current Grade']||x.grade||'').trim(), email:String(x['Email 1']||x.email||'').trim() })).filter(x=>x.personId && x.fullName); if(rows.length) setRoster(rows); } }catch(e){} })(); },[]);
-
-    const boxes = useMemo(()=> uniqueBoxes(roster), [roster]);
-
-    const onUploadCSV=(file)=>{ Papa.parse(file,{header:true,skipEmptyLines:true,complete:(res)=>{ const rows=res.data.map(x=>({ personId:String(x['Person ID']||'').trim(), fullName:String(x['Full Name']||'').trim(), securityNumber:String(x['Security Number']||'').trim(), grade:String(x['Current Grade']||'').trim(), email:String(x['Email 1']||'').trim() })).filter(x=>x.personId && x.fullName); setRoster(rows); }}); };
-
-    const onPhoto=(file)=>{
-      const url = URL.createObjectURL(file);
-      setImageURL(url); setStats(null); setMissing([]); setImgReady(false);
-      const img = new Image(); img.onload=()=>{ setImgReady(true); }; img.src=url;
-    };
+    const onPhoto=(file)=>{ setImageURL(URL.createObjectURL(file)); setStats(null); };
 
     async function ensureImageReady(){
       const img = imgRef.current; if(!img) return false; if (img.complete && img.naturalWidth>0) return true; try { await img.decode(); return true; } catch { return false; }
     }
 
     const analyze=async()=>{
-      if(!cvReady) return alert('OpenCV still loading… try again in a moment.');
+      if(!cvReady) return alert('OpenCV still loading… try in a moment.');
       if(!imageURL) return alert('Add a photo first.');
-      if(!box) return alert('Pick a box (e.g., 9B, 10A, SM1) so we can compute missing names.');
-      const ok = await ensureImageReady(); if(!ok) return alert('Image not ready yet—try again.');
+      const ok = await ensureImageReady(); if(!ok) return alert('Image not ready yet—try Analyze again.');
       setBusy(true); setTimeout(()=>{ try{ runAnalysis(); } finally{ setBusy(false); } }, 10);
     };
 
     function drawMaskPreview(mask){
       if(!showMask || !mask) return;
-      const w=mask.cols, h=mask.rows; const canvas=maskRef.current; const maxW=280; const scale=maxW/w; canvas.width=maxW; canvas.height=Math.round(h*scale);
+      const w=mask.cols, h=mask.rows; const canvas=maskRef.current; const maxW=320; const scale=maxW/w; canvas.width=maxW; canvas.height=Math.round(h*scale);
       const dst = new window.cv.Mat(); window.cv.resize(mask, dst, new window.cv.Size(canvas.width, canvas.height)); window.cv.imshow(canvas, dst); dst.delete();
     }
 
@@ -192,11 +172,14 @@
       const img=imgRef.current; const work=workRef.current; const W0=img.naturalWidth, H0=img.naturalHeight; work.width=W0; work.height=H0; const ctx=work.getContext('2d'); ctx.drawImage(img,0,0,W0,H0);
       const cv=window.cv; const src=cv.imread(work); const W=src.cols, H=src.rows;
 
+      // Detect rows/cols & produce mask
       const { barsY, colCenters, mask, hsv, low, high, k } = detectRowsAndColumns(cv, src, W, H, hsvRange);
       drawMaskPreview(mask);
 
+      // Build slots/bands
       const { slots, bands } = buildSlots(W, H, barsY, colCenters, bandPct, marginPct);
 
+      // Presence detection (bottom band emphasized)
       const densities=[]; const densitiesBottom=[];
       for(let i=0;i<slots.length;i++){
         const s=slots[i]; const b=bands[i];
@@ -206,37 +189,22 @@
       const thrFull=robustThreshold(densities); const thrBottom=robustThreshold(densitiesBottom);
       for(let i=0;i<slots.length;i++) slots[i].present = (densitiesBottom[i]>thrBottom) || (densities[i]>thrFull);
 
+      // Draw overlay (always)
       drawOverlay(imgRef.current, overlayRef.current, W, H, slots, bands);
 
-      const occupied=new Set(); for(let i=0;i<slots.length;i++) if(slots[i].present) occupied.add(i+1);
-      const group = roster.filter(r=>{ const p=parseSecurityNumber(r.securityNumber); return p && p.box===box; });
-      const missingList = group.filter(stu=>{ const p=parseSecurityNumber(stu.securityNumber); return p && !occupied.has(p.slot); });
+      setStats({ rowsFound: barsY.length, colsFound: colCenters.length, thrFull: +thrFull.toFixed(4), thrBottom: +thrBottom.toFixed(4), present: slots.filter(s=>s.present).length });
 
-      setMissing(missingList);
-      setStats({ rowsFound: barsY.length, colsFound: colCenters.length, thrFull: +thrFull.toFixed(4), thrBottom: +thrBottom.toFixed(4), present: occupied.size });
-
+      // cleanup
       mask.delete(); hsv.delete(); low.delete(); high.delete(); k.delete(); src.delete();
     }
 
     return React.createElement('div',{className:'max-w-6xl mx-auto space-y-4'},[
       React.createElement('div',{className:'card'},[
-        React.createElement('h1',{className:'text-2xl font-bold'},'Phone Box Checker — Projection + Debug Mask + Roster'),
+        React.createElement('h1',{className:'text-2xl font-bold'},'Phone Box Checker — Projection Detector + Blue Mask Debug'),
         React.createElement('div',{className:'flex flex-wrap items-center gap-2 small mt-1'},[
-          React.createElement('span',{className:'badge',style:{background:cvReady?'#DCFCE7':'#FEF3C7', color:'#111'}}, cvReady? 'OpenCV: ✅ ready' : 'OpenCV: loading…'),
+          React.createElement('span',{className:'badge',style:{background:cvReady?'#DCFCE7':'#FEF3C7', color:'#111'}}, cvReady? 'OpenCV: ✅ ready' : 'OpenCV: loading…')
         ]),
-        React.createElement('p',{className:'small mt-2'},'Steps: 1) Upload roster.csv (once), 2) Pick the Box (9A–12F, SM1/SM2), 3) Take/Upload photo, 4) Analyze. If rectangles do not sit above the blue numbers, tweak Hue 90–140 and Sat/Val 40–80.')
-      ]),
-
-      React.createElement('div',{className:'card'},[
-        React.createElement('div',{className:'flex flex-wrap items-center gap-3 text-sm'},[
-          React.createElement('label',{className:'btn'},['Upload roster.csv', React.createElement('input',{type:'file',accept:'.csv',className:'hidden',onChange:e=>{ const f=e.target.files?.[0]; if(f) onUploadCSV(f); }})]),
-          React.createElement('a',{className:'btn',href:'roster.csv',download:true},'Download current roster.csv'),
-          React.createElement('div',{className:'small'},()=>'Roster rows: '+roster.length),
-          React.createElement('label',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'small'},'Box'),
-            React.createElement('select',{className:'border rounded px-2 py-1',value:box,onChange:e=>setBox(e.target.value)},[React.createElement('option',{key:'',value:''},'— Pick —'),...boxes.map(b=>React.createElement('option',{key:b,value:b},b))])
-          ])
-        ])
+        React.createElement('p',{className:'small mt-2'},'Tip: If the Blue Mask preview is black, widen Hue to 90–140 and lower Sat/Val mins to ~40–80, then Analyze again.')
       ]),
 
       React.createElement('div',{className:'card'},[
@@ -290,13 +258,8 @@
         React.createElement('div',{className:'card'},[
           React.createElement('h3',{className:'font-semibold mb-2'},'Blue Mask (debug)'),
           React.createElement('canvas',{ref:maskRef,className:'w-full border rounded',style:{background:'#000'}}),
-          React.createElement('div',{className:'small mt-2'},'If this looks mostly black, lower Sat/Val mins or widen Hue (e.g., 90–140).')
+          React.createElement('div',{className:'small mt-2'},'If this looks black, widen Hue to 90–140 and set Sat/Val mins to ~40–80, then Analyze again.')
         ])
-      ]),
-
-      (box && missing) && React.createElement('div',{className:'card'},[
-        React.createElement('h3',{className:'font-semibold mb-2'},()=>`Missing — ${box}`),
-        missing.length ? React.createElement('ul',{className:'list-disc list-inside text-sm'}, missing.map(stu=> React.createElement('li',{key:stu.personId}, `${stu.fullName} — ${stu.securityNumber}`))) : React.createElement('div',{className:'small text-green-700'},'No one missing (based on detected occupied slots).')
       ]),
 
       stats && React.createElement('div',{className:'card small'},[
