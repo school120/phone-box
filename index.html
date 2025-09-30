@@ -253,7 +253,7 @@ async function buildWallsAndROIs(){
   }
   // Sanity: guarantee 13 per row
   for(let r=0;r<boundsByRow.length;r++){
-    if(!boundsByRow[r] || boundsByRow[r].length!==12){
+    if(!boundsByRow[r] || boundsByRow[r].length!==13){
       const {xL,xR} = await bandInterior(current.image, rowBottoms[r], edgeCrop(), blueSens());
       boundsByRow[r] = forceEqualWalls(xL,xR);
     }
