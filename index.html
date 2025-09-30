@@ -324,8 +324,11 @@ document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
   const xRunsByRow=[]; // each: [{start,end,center}] * 12
   const bandHalf = Math.max(3, Math.round((labelPct*H)/2));
   for(const y of yBars){
-    const runs = find12PadsRobust({data,W,H}, y, bandHalf, {hueMin,hueMax,sMin,vMin,edgeCrop,minRunPct});
-    if(runs.length!==12){ alert('Could not isolate 12 blue pads on a row. Try widening hue range or lowering S/V; you can also increase "Ignore X edges" and retry.'); return; }
+    let runs = find12PadsRobust({data,W,H}, y, bandHalf, {hueMin,hueMax,sMin,vMin,edgeCrop,minRunPct});
+    if(runs.length!==12){
+      console.warn('Could not isolate 12 blue pads on a row — falling back to equal-bin segmentation.');
+      runs = bin12EqualRuns(W, edgeCrop);
+    }
     xRunsByRow.push(runs);
   }
 
@@ -347,11 +350,12 @@ document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
 
   // 4) build detection ROIs (rectangles ABOVE numbers), with side insets
   const roisDetect=[];
-  const detectH = Math.max(10, Math.round(phonePct*rowH)); // band above label
-  const detectGap = Math.round(0.04*rowH);                  // small gap above label
+  const detectH = Math.max(10, Math.round(phonePct*rowH)); // height of band above the numbers
   for(let r=0;r<5;r++){
-    const yDet1 = Math.max(0, yBars[r] - detectGap);
-    const yDet0 = Math.max(0, yDet1 - detectH);
+    // The blue bar is the bottom of the number strip — anchor ROI bottom to it
+    const yBottom = Math.max(0, Math.round(yBars[r]) - 1); // 1px above the blue line
+    const yDet1 = yBottom;                                  // bottom of detection band
+    const yDet0 = Math.max(0, yDet1 - detectH);             // top of detection band
     for(let c=0;c<12;c++){
       let x0=xBounds[c], x1=xBounds[c+1];
       const baseInset = Math.round((x1-x0)*insetPct);
@@ -366,7 +370,7 @@ document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
   boxConfig[box] = { roisDetect };
   localStorage.setItem('phonebox_config', JSON.stringify(boxConfig));
   calibDebug = { yBars, centersGlobal, xBounds, runsByRow: xRunsByRow };
-  statusEl.textContent='Auto-calibration complete (rectangles above numbers).';
+  statusEl.textContent='Auto-calibration complete (rectangles above numbers, bottom anchored to blue bar).';
   drawOverlay();
 });
 
@@ -409,7 +413,20 @@ function dilate1D(mask, rad){ const out=new Uint8Array(mask.length); for(let i=0
 function erode1D(mask, rad){ const out=new Uint8Array(mask.length); for(let i=0;i<mask.length;i++){ let v=1; for(let k=-rad;k<=rad;k++){ const j=i+k; if(!(j>=0 && j<mask.length && mask[j])){ v=0; break; } } out[i]=v; } return out; }
 function close1D(mask, rad){ return erode1D(dilate1D(mask,rad),rad); }
 
-async function findFiveBlueLines(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}){
+// Equal-bin 12-run fallback when blue segmentation struggles
+function bin12EqualRuns(W, edgeCrop){
+  const xLeft = Math.round(W*edgeCrop), xRight = Math.round(W*(1-edgeCrop));
+  const width = xRight - xLeft + 1; const bin = Math.floor(width/12);
+  const runs=[]; for(let k=0;k<12;k++){
+    const s = xLeft + k*bin;
+    const e = (k===11 ? xRight : xLeft + (k+1)*bin - 1);
+    const center = Math.round((s+e)/2);
+    runs.push({start:s,end:e,center});
+  }
+  return runs;
+}
+
+async function findFiveBlueLines(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}){(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}){
   const ctx=canvas.getContext('2d');
   const {data,width:W,height:H} = ctx.getImageData(0,0,canvas.width,canvas.height);
   const score=new Float32Array(H);
