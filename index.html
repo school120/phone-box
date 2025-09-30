@@ -1,14 +1,11 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Phone Box Overlay + Roster (12×5) — Mobile</title>
-
-<!-- Dependencies -->
-<script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.3/dist/tesseract.min.js"></script>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>Phone Box Overlay + Roster (Blue-Bar Auto • 12×5)</title>
+<!-- Only one dependency for CSV parsing -->
 <script defer src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-
 <style>
   :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0;--accent:#32d0ff}
   *{box-sizing:border-box}
@@ -18,13 +15,13 @@
   main{max-width:1200px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px}
   .card{background:var(--card);border:1px solid #ffffff1a;border-radius:16px;padding:14px;box-shadow:0 10px 30px #0008}
   label{display:block;margin:10px 0 6px;color:var(--muted);font-size:14px}
-  input[type="file"], select, button{width:100%;padding:14px 16px;border-radius:12px;border:1px solid #ffffff2b;background:#0f1738;color:#fff;font-size:16px}
+  input[type="file"],select,button{width:100%;padding:14px 16px;border-radius:12px;border:1px solid #ffffff2b;background:#0f1738;color:#fff;font-size:16px}
   button.primary{background:linear-gradient(180deg,#3bc2f2,#1aa1d9);border:none;font-weight:800}
   small{color:var(--muted)}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 
-  /* ----- Preview area ----- */
-  #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0c1333;min-height:200px}
+  /* Preview area */
+  #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0c1333;min-height:220px}
   #img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;z-index:0}
   #overlay{position:absolute;inset:0;pointer-events:none;z-index:1}
 
@@ -46,7 +43,7 @@
 </style>
 </head>
 <body>
-<header>📱 Phone Box Overlay + Roster (auto numbers → 12×5) — Mobile</header>
+<header>📱 Phone Box Overlay + Roster (Blue-Bar Auto • 12×5)</header>
 
 <main>
   <section class="card" id="left">
@@ -54,6 +51,7 @@
       <img id="img" alt="preview">
       <canvas id="overlay"></canvas>
     </div>
+
     <div class="grid" id="boxGrid"></div>
     <table>
       <thead><tr><th>Slot</th><th>Expected</th><th>Status</th></tr></thead>
@@ -86,13 +84,25 @@
       </div>
     </div>
 
-    <div class="toolbar">
-      <button id="scan" class="primary">Scan & Overlay</button>
-      <button id="analyze" disabled>Analyze & Compare</button>
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label>Slot inset % (avoid foam walls)</label>
+        <input id="insetPct" type="range" min="0" max="25" step="1" value="10">
+      </div>
+      <div>
+        <label>Blue sensitivity</label>
+        <input id="blueSens" type="range" min="20" max="80" step="5" value="30">
+      </div>
     </div>
 
     <div class="toolbar">
-      <label class="hint"><input id="fastMode" type="checkbox" style="vertical-align:middle"> Fast mode (skip OCR; equal 12 per row)</label>
+      <button id="scan" class="primary">Scan & Overlay</button>
+      <button id="analyze" disabled>Analyze & Compare</button>
+      <button id="reset">Reset</button>
+    </div>
+
+    <div class="toolbar">
+      <label class="hint"><input id="showGuides" type="checkbox" checked style="vertical-align:middle"> Show guides</label>
       <span id="progress" class="pill"></span>
     </div>
 
@@ -101,7 +111,7 @@
 </main>
 
 <script>
-/* ========== Elements & State ========== */
+/* ===== Elements & State ===== */
 const img = document.getElementById('img');
 const stage = document.getElementById('stage');
 const overlay = document.getElementById('overlay');
@@ -112,9 +122,14 @@ const progressEl = document.getElementById('progress');
 
 const rowPctEl = document.getElementById('rowPct');
 const edgePctEl = document.getElementById('edgePct');
-const fastModeEl = document.getElementById('fastMode');
+const insetPctEl = document.getElementById('insetPct');
+const blueSensEl = document.getElementById('blueSens');
+const showGuidesEl = document.getElementById('showGuides');
+
 const analyzeBtn = document.getElementById('analyze');
 const scanBtn = document.getElementById('scan');
+const resetBtn = document.getElementById('reset');
+
 const rosterSource = document.getElementById('rosterSource');
 const rosterFile = document.getElementById('rosterFile');
 const boxSel = document.getElementById('box');
@@ -122,14 +137,13 @@ const resultsBody = document.getElementById('results');
 const boxGrid = document.getElementById('boxGrid');
 
 let current=null;         // {image, W, H}
-let rowTops=[];           // 5 y-positions
-let boundsByRow=[];       // 5×13 ints
-let LR=[];                // 5×[L,R]
+let rowTops=[];           // 5 y-positions (top edge of blue bars)
+let boundsByRow=[];       // 5×13 ints (12 slots → 13 vertical boundaries)
+let LR=[];                // 5×[L,R] limits per row
 let rois=[];              // 60 rects
 let roster=[];            // CSV rows
-let worker=null, workerReady=false;
 
-/* ========== Boxes ========== */
+/* ===== Boxes ===== */
 (function fillBoxes(){
   const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
   grades.forEach(g=>letters.forEach(l=>ids.push(g+l)));
@@ -137,7 +151,7 @@ let worker=null, workerReady=false;
   boxSel.innerHTML = ids.map(x=>`<option>${x}</option>`).join('');
 })();
 
-/* ========== Roster ========== */
+/* ===== Roster ===== */
 rosterSource.addEventListener('change', ()=>{
   rosterFile.style.display = rosterSource.value==='upload' ? 'block' : 'none';
   if(rosterSource.value==='repo') loadRosterFromRepo();
@@ -151,93 +165,64 @@ function loadRosterFromRepo(){
 function loadRosterFromFile(f){
   Papa.parse(f, {header:true, complete:(r)=>{ roster=r.data||[]; setStatus('Roster loaded from file.'); }});
 }
+// try to auto-load repo roster
 loadRosterFromRepo();
 
-/* ========== Photo loading with reliable preview sizing ========== */
+/* ===== Photo ===== */
 document.getElementById('photo').addEventListener('change', (e)=>{
   const f = e.target.files[0]; if(!f) return;
   const url = URL.createObjectURL(f);
   const im = new Image();
   im.onload = () => {
     current = { image: im, W: im.naturalWidth, H: im.naturalHeight };
-    img.src = url;
-    img.style.display='block';
-
-    // Size the stage to match the photo aspect ratio so the preview is always visible
-    sizeToImageAspect();
+    img.src = url; img.style.display='block';
+    sizeToImageAspect(); // ensure preview
     draw();
     setStatus('Photo loaded. Tap “Scan & Overlay”.');
   };
   im.onerror = () => setStatus('Could not load image. Try another photo.');
   im.src = url;
 });
-
-// Keep the preview sized correctly when the screen changes
 window.addEventListener('resize', sizeToImageAspect);
 function sizeToImageAspect(){
   if(!current) return;
   const W = stage.clientWidth;
-  const H = Math.max(200, Math.round(W * (current.H / current.W))); // maintain aspect ratio, never collapse
+  const H = Math.max(220, Math.round(W * (current.H / current.W)));
   stage.style.height = H + 'px';
   overlay.width = W;
   overlay.height = H;
-  // img covers the stage (absolute+contain via CSS)
 }
 
-/* ========== Status helpers ========== */
+/* ===== UI helpers ===== */
 function setStatus(t){ statusEl.textContent = t||''; }
 function setProgress(t){ progressEl.textContent = t||''; }
+function edgeCrop(){ return parseInt(edgePctEl.value,10)/100; }
+function rowHeight(){ return parseInt(rowPctEl.value,10)/100; }
+function insetFrac(){ return parseInt(insetPctEl.value,10)/100; }
+function blueSens(){ return parseInt(blueSensEl.value,10)/100; }
 
-/* ========== Scan & Overlay ========== */
+/* ===== Scan & Overlay (no OCR) ===== */
 scanBtn.addEventListener('click', async ()=>{
   if(!current){ alert('Upload a photo first.'); return; }
   analyzeBtn.disabled = true;
-  setStatus('Scanning…'); setProgress('preparing');
+  setStatus('Scanning…'); setProgress('detecting rows');
 
-  // 1) Detect 5 blue bars (fast)
-  rowTops = await findBlueBars(current.image, edgeCrop());
-  if(rowTops.length!==5){ setStatus('Could not find 5 blue bars. Adjust Edge crop % or retake photo.'); draw(); return; }
-  setProgress('found rows');
+  // 1) Detect five blue number bars (top edge)
+  rowTops = await findBlueBars(current.image, edgeCrop(), blueSens());
+  if(rowTops.length!==5){ setStatus('Could not find 5 blue bars. Increase Blue sensitivity or adjust Edge crop %.'); draw(); return; }
 
-  // 2) Per-row L/R from blue content
+  setProgress('finding left/right');
+  // 2) For each row, estimate L/R limits by blue content
   LR = await findLRForRows(current.image, rowTops, edgeCrop());
 
-  // 3) Bounds per row: OCR centers if available; otherwise equal 12 between L/R
+  // 3) Build 13 vertical bounds per row by splitting L..R into 12 equal slots
   boundsByRow = [];
-  const useOCR = !fastModeEl.checked;
-  if(useOCR){ await ensureWorker(); } // if this fails we silently fallback
+  for(let r=0;r<5;r++){ boundsByRow.push(equalBounds(LR[r][0], LR[r][1], 12)); }
 
+  // 4) Build ROIs above each row
+  rois = [];
   const gaps=[]; for(let i=1;i<rowTops.length;i++) gaps.push(rowTops[i]-rowTops[i-1]);
   const avgGap = gaps.reduce((a,b)=>a+b,0)/gaps.length;
-  const bandH = Math.max(20, Math.round(avgGap*0.32));
-
-  for(let r=0;r<5;r++){
-    setProgress(`row ${r+1}/5`);
-    const [L,R] = LR[r];
-
-    if(useOCR && workerReady){
-      const y0 = Math.max(0, rowTops[r]-3);
-      const y1 = Math.min(current.H-1, rowTops[r] + bandH);
-      const crop = cropRectCanvas(current.image, 0, y0, current.W, y1-y0+1);
-
-      // per-row timeout to avoid “stuck” state
-      let centers=null;
-      try{
-        const rowResult = await withTimeout(recognizeDigits(crop), 6000);
-        if(rowResult && rowResult.length){
-          const xs = rowResult.map(o=>o.x).sort((a,b)=>a-b);
-          centers = normalizeToTwelve(xs);
-        }
-      }catch(e){ /* ignore and fallback */ }
-
-      boundsByRow.push( centers ? toBoundsFromCenters(centers, L, R) : equalBounds(L, R, 12) );
-    } else {
-      boundsByRow.push(equalBounds(L, R, 12));
-    }
-  }
-
-  // 4) Build rectangles above each row
-  rois = [];
   const pct = rowHeight();
   for(let r=0;r<5;r++){
     const yBottom = rowTops[r];
@@ -245,7 +230,7 @@ scanBtn.addEventListener('click', async ()=>{
     const b = boundsByRow[r];
     for(let i=0;i<12;i++){
       const x0=b[i], x1=b[i+1];
-      const inset = Math.round((x1-x0)*0.10); // avoid the foam walls
+      const inset = Math.round((x1-x0)*insetFrac());
       rois.push({ x:x0+inset, y:yTop, w:Math.max(1,(x1-x0-2*inset)), h:yBottom-yTop, row:r, col:i });
     }
   }
@@ -255,7 +240,11 @@ scanBtn.addEventListener('click', async ()=>{
   setProgress('ready'); setStatus('Overlay ready. Tap “Analyze & Compare”.');
 });
 
-/* ========== Analyze & Compare ========== */
+resetBtn.addEventListener('click', ()=>{
+  rowTops=[]; boundsByRow=[]; LR=[]; rois=[]; resultsBody.innerHTML=''; boxGrid.innerHTML=''; draw(); setStatus('');
+});
+
+/* ===== Analyze & Compare ===== */
 analyzeBtn.addEventListener('click', ()=>{
   if(!rois.length) return alert('Scan & Overlay first.');
   if(!boxSel.value) return alert('Choose a Box (e.g., 9B, 10C, SM1).');
@@ -283,37 +272,32 @@ analyzeBtn.addEventListener('click', ()=>{
   setStatus('Compared to roster.');
 });
 
-/* ========== Draw overlay ========== */
+/* ===== Drawing ===== */
 function draw(){
   ctx.clearRect(0,0,overlay.width,overlay.height);
   if(!current) return;
   const sx = overlay.width/current.W, sy = overlay.height/current.H;
 
-  // cyan row lines
-  if(rowTops.length){
-    ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent')||'#32d0ff';
-    ctx.lineWidth=2;
-    for(const y of rowTops){
-      ctx.beginPath(); ctx.moveTo(0, y*sy); ctx.lineTo(overlay.width, y*sy); ctx.stroke();
+  if(showGuidesEl.checked){
+    // cyan row lines
+    if(rowTops.length){
+      ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent')||'#32d0ff';
+      ctx.lineWidth=2;
+      for(const y of rowTops){ ctx.beginPath(); ctx.moveTo(0, y*sy); ctx.lineTo(overlay.width, y*sy); ctx.stroke(); }
     }
-  }
-  // L/R ticks (yellow) & white bounds
-  if(boundsByRow.length){
-    for(let r=0;r<5;r++){
-      const y=rowTops[r]*sy;
-      // L/R
-      if(LR[r]){
-        ctx.strokeStyle='#ffd84a'; ctx.lineWidth=1.5;
-        const [L,Rr]=LR[r];
-        const h=40;
-        ctx.beginPath(); ctx.moveTo(L*sx,y-h); ctx.lineTo(L*sx,y+h); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(Rr*sx,y-h); ctx.lineTo(Rr*sx,y+h); ctx.stroke();
+    // yellow L/R & white bounds
+    if(boundsByRow.length){
+      for(let r=0;r<5;r++){
+        const y=rowTops[r]*sy;
+        if(LR[r]){
+          ctx.strokeStyle='#ffd84a'; ctx.lineWidth=1.6;
+          const [L,R]=LR[r]; const h=40;
+          ctx.beginPath(); ctx.moveTo(L*sx,y-h); ctx.lineTo(L*sx,y+h); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(R*sx,y-h); ctx.lineTo(R*sx,y+h); ctx.stroke();
+        }
+        ctx.strokeStyle='#fff'; ctx.lineWidth=1.5;
+        boundsByRow[r].forEach(x=>{ const xx=x*sx; ctx.beginPath(); ctx.moveTo(xx,y-40); ctx.lineTo(xx,y+40); ctx.stroke(); });
       }
-      // bounds
-      ctx.strokeStyle='#fff'; ctx.lineWidth=1.5;
-      boundsByRow[r].forEach(x=>{
-        const xx=x*sx; ctx.beginPath(); ctx.moveTo(xx, y-40); ctx.lineTo(xx, y+40); ctx.stroke();
-      });
     }
   }
   // slot rectangles
@@ -323,7 +307,7 @@ function draw(){
   }
 }
 
-/* ========== Roster helpers ========== */
+/* ===== Roster helpers ===== */
 function namesForBox(boxId){
   const out={};
   for(const row of roster){
@@ -347,32 +331,35 @@ function drawNamesGrid(namesBySlot={}){
   }
 }
 
-/* ========== Image/Color/Geometry ========== */
-function cropRectCanvas(imgEl, x,y,w,h){
-  const c=document.createElement('canvas'); c.width=w; c.height=h;
-  c.getContext('2d').drawImage(imgEl, x,y,w,h, 0,0,w,h);
+/* ===== Image/Color/Geometry ===== */
+function cropROI(r){
+  const c=document.createElement('canvas'); c.width=r.w; c.height=r.h;
+  c.getContext('2d').drawImage(current.image, r.x,r.y,r.w,r.h, 0,0,r.w,r.h);
   return c;
 }
-function rgb2hsv(r,g,b){
-  r/=255; g/=255; b/=255;
-  const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
-  let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; }
-  const s=max===0?0:d/max, v=max; return {h,s,v};
+function slotOccupied(c){
+  const k=c.getContext('2d');
+  const cx=Math.round(c.width*0.20), cw=Math.round(c.width*0.60);
+  const cy=Math.round(c.height*0.15), ch=Math.round(c.height*0.60);
+  const {data}=k.getImageData(cx,cy,cw,ch);
+  const cols=new Float32Array(cw).fill(0), dark=130;
+  for(let y=0;y<ch;y++){ for(let x=0;x<cw;x++){ const i=(y*cw+x)*4; const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; if(L<dark) cols[x]++; } }
+  for(let x=0;x<cw;x++) cols[x]/=ch;
+  let best=0,run=0; for(let x=0;x<cw;x++){ if(cols[x]>0.5){ run++; best=Math.max(best,run);} else run=0; }
+  return best>=Math.round(cw*0.25);
 }
 
-/* ---- Blue bar detection ---- */
-async function findBlueBars(imgEl, edgeCrop){
-  const maxW=1200;
-  const r=Math.min(1, maxW/imgEl.naturalWidth);
+/* Detect 5 blue bars */
+async function findBlueBars(imgEl, edgeCrop, sens){
+  const maxW=1200, r=Math.min(1, maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
   const c=document.createElement('canvas'); c.width=W; c.height=H;
   const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
   const {data}=g.getImageData(0,0,W,H);
 
-  const hueMin=190, hueMax=265, sMin=0.30, vMin=0.22;
+  const hueMin=190, hueMax=265, sMin=0.28, vMin=0.20 + sens*0.3; // raise vMin as sensitivity increases
   const x0=Math.round(W*edgeCrop), x1=Math.round(W*(1-edgeCrop));
   const frac=new Float32Array(H);
-
   for(let y=0;y<H;y++){
     let cnt=0, blue=0;
     for(let x=x0;x<=x1;x+=2){
@@ -386,27 +373,27 @@ async function findBlueBars(imgEl, edgeCrop){
   const win=Math.round(H*0.035), tops=[];
   for(const p of peaks){
     let M=0; for(let y=Math.max(0,p-win); y<=Math.min(H-1,p+win); y++) M=Math.max(M,s[y]);
-    const T=M*0.5;
-    let top=p; for(let y=p;y>=0;y--){ if(s[y]>=T) top=y; else break; }
+    const T=M*0.5; let top=p;
+    for(let y=p;y>=0;y--){ if(s[y]>=T) top=y; else break; }
     tops.push(top);
   }
   return tops.sort((a,b)=>a-b).map(y=>Math.round(y/r));
 }
+function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0)h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
 function smooth(a,w){const o=new Float32Array(a.length); for(let i=0;i<a.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=a.length) continue; s+=a[j]; c++;} o[i]=s/c;} return o;}
 function topPeaks(s,count,minDist){const idx=[...s].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const out=[]; for(const [,i] of idx){ if(out.every(j=>Math.abs(j-i)>minDist)) out.push(i); if(out.length>=count) break; } return out.sort((a,b)=>a-b);}
 
-/* ---- Per-row L/R from blue content ---- */
+/* Per-row L/R from blue content */
 async function findLRForRows(imgEl, tops, edgeCrop){
   const maxW=1200; const r=Math.min(1, maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
-  const can=document.createElement('canvas'); can.width=W; can.height=H; const g=can.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
+  const can=document.createElement('canvas'); can.width=W; can.height=H;
+  const g=can.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
   const im=g.getImageData(0,0,W,H);
   const scaleX = imgEl.naturalWidth/W;
-
   const gaps=[]; for(let i=1;i<tops.length;i++) gaps.push((tops[i]-tops[i-1])*r);
   const avgGap = gaps.reduce((a,b)=>a+b,0)/gaps.length || H/5;
   const bandH = Math.max(6, Math.round(avgGap*0.22));
-
   const out=[];
   for(const yBig of tops){
     const ySm = Math.max(0, Math.round(yBig*r));
@@ -421,7 +408,7 @@ function blueAmountByColumn(im, y0,y1){
   for(let x=0;x<W;x++){
     let s=0; for(let y=y0;y<=y1;y++){
       const i=(y*W+x)*4; const {h,s:S,v}=rgb2hsv(data[i],data[i+1],data[i+2]);
-      if((h>190&&h<265)&&S>=0.30&&v>=0.22) s++;
+      if((h>190&&h<265)&&S>=0.28&&v>=0.22) s++;
     }
     col[x]=s;
   }
@@ -445,102 +432,8 @@ function largestRun(col, pad){
 }
 function quantile(a,q){const b=[...a].sort((x,y)=>x-y); const i=Math.max(0,Math.min(b.length-1,Math.floor(q*(b.length-1)))); return b[i];}
 
-/* ---- Bounds helpers ---- */
+/* Bounds helper (12 slots = 13 boundaries) */
 function equalBounds(L,R,n){ const step=(R-L)/n; const b=[Math.round(L)]; for(let i=1;i<n;i++) b.push(Math.round(L+i*step)); b.push(Math.round(R)); return b; }
-function normalizeToTwelve(centers){
-  centers=centers.slice().sort((a,b)=>a-b);
-  while(centers.length>12){
-    let bi=0, best=1e9; for(let i=0;i<centers.length-1;i++){const g=centers[i+1]-centers[i]; if(g<best){best=g;bi=i;}}
-    centers.splice(bi,2,(centers[bi]+centers[bi+1])/2);
-  }
-  while(centers.length<12){
-    let bi=0, best=-1; for(let i=0;i<centers.length-1;i++){const g=centers[i+1]-centers[i]; if(g>best){best=g;bi=i;}}
-    centers.splice(bi+1,0,(centers[bi]+centers[bi+1])/2);
-  }
-  return centers;
-}
-function toBoundsFromCenters(centers, L, R){
-  const bounds=[];
-  const stepAvg=(centers[11]-centers[0])/11;
-  bounds.push(Math.max(L, Math.round(centers[0]-stepAvg/2)));
-  for(let i=0;i<11;i++) bounds.push(Math.round((centers[i]+centers[i+1])/2));
-  bounds.push(Math.min(R, Math.round(centers[11]+stepAvg/2)));
-  bounds[0]=Math.max(bounds[0], L);
-  for(let i=1;i<bounds.length;i++) bounds[i]=Math.max(bounds[i], bounds[i-1]+1);
-  bounds[bounds.length-1]=Math.min(bounds[bounds.length-1], R);
-  return bounds;
-}
-
-/* ---- OCR (robust, non-blocking) ---- */
-async function ensureWorker(){
-  if(workerReady) return;
-  try{
-    setProgress('loading OCR…');
-    worker = await Tesseract.createWorker({ logger: m => { if(m.status) setProgress(m.status.replace('_',' ')); }});
-    await worker.loadLanguage('eng');
-    await worker.initialize('eng');
-    await worker.setParameters({
-      tessedit_char_whitelist: '0123456789',
-      tessedit_pageseg_mode: '7'
-    });
-    workerReady=true;
-  }catch(e){
-    workerReady=false; // fallback will be used
-  }
-}
-async function recognizeDigits(cropCanvas){
-  const { data } = await worker.recognize(cropCanvas);
-  const words = data.words || [];
-  const xs = words
-    .map(w => ({ txt:(w.text||'').replace(/\D/g,''), x:(w.bbox.x0+w.bbox.x1)/2 }))
-    .filter(w => w.txt.length>0)
-    .map(w => ({ x:w.x }));
-  xs.sort((a,b)=>a.x-b.x);
-  const out=[]; const minGap=14;
-  for(const p of xs){ if(!out.length || Math.abs(p.x - out[out.length-1].x) >= minGap) out.push(p); }
-  return out;
-}
-function withTimeout(promise, ms){
-  return new Promise((resolve, reject)=>{
-    const t=setTimeout(()=>reject(new Error('timeout')), ms);
-    promise.then(v=>{clearTimeout(t); resolve(v);}).catch(e=>{clearTimeout(t); reject(e);});
-  });
-}
-
-/* ---- Presence detection ---- */
-function cropROI(r){
-  const c=document.createElement('canvas'); c.width=r.w; c.height=r.h;
-  c.getContext('2d').drawImage(current.image, r.x,r.y,r.w,r.h, 0,0,r.w,r.h);
-  return c;
-}
-function slotOccupied(c){
-  const k=c.getContext('2d');
-  const cx=Math.round(c.width*0.20), cw=Math.round(c.width*0.60);
-  const cy=Math.round(c.height*0.15), ch=Math.round(c.height*0.60);
-  const {data}=k.getImageData(cx,cy,cw,ch);
-  const cols=new Float32Array(cw).fill(0); const dark=130;
-  for(let y=0;y<ch;y++){ for(let x=0;x<cw;x++){ const i=(y*cw+x)*4; const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; if(L<dark) cols[x]++; } }
-  for(let x=0;x<cw;x++) cols[x]/=ch;
-  let best=0,run=0; for(let x=0;x<cw;x++){ if(cols[x]>0.5){ run++; best=Math.max(best,run);} else run=0; }
-  return best>=Math.round(cw*0.25);
-}
-
-/* ---- Convenience getters ---- */
-function edgeCrop(){ return parseInt(edgePctEl.value,10)/100; }
-function rowHeight(){ return parseInt(rowPctEl.value,10)/100; }
-
-/* ---- Names grid ---- */
-function drawNamesGrid(namesBySlot={}){
-  boxGrid.innerHTML='';
-  for(let r=0;r<5;r++){
-    for(let c=0;c<12;c++){
-      const idx=r*12+c+1;
-      const d=document.createElement('div'); d.className='slot';
-      const s=document.createElement('span'); s.textContent=namesBySlot[idx]||`#${idx}`;
-      d.appendChild(s); boxGrid.appendChild(d);
-    }
-  }
-}
 </script>
 </body>
 </html>
