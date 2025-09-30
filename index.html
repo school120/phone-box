@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box — Blue ticks alignment • Green/Red overlay (12×5)</title>
+<title>Phone Box — 12 slots aligned to blue numbers</title>
 <style>
-  :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0;--accent:#32d0ff}
+  :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0}
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;background:var(--bg);color:#fff;font-family:system-ui,-apple-system,Inter,Roboto,Segoe UI}
   header{padding:14px 16px;border-bottom:1px solid #ffffff1a;font-weight:800}
-  main{max-width:1200px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px}
-  .card{background:var(--card);border:1px solid #ffffff1a;border-radius:16px;padding:14px;box-shadow:0 10px 30px #0008}
+  main{max-width:1200px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1.08fr 0.92fr;gap:16px}
+  .card{background:#11183a;border:1px solid #ffffff1a;border-radius:16px;padding:14px}
   label{display:block;margin:10px 0 6px;color:var(--muted);font-size:14px}
   input[type="file"],select,button{width:100%;padding:14px 16px;border-radius:12px;border:1px solid #ffffff2b;background:#0f1738;color:#fff;font-size:16px}
   button.primary{background:linear-gradient(180deg,#3bc2f2,#1aa1d9);border:none;font-weight:800}
@@ -25,12 +25,6 @@
 
   .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
   .pill{display:inline-block;padding:.2rem .6rem;border-radius:999px;background:#ffffff24;font-size:12px}
-
-  #legend{display:flex;gap:10px;align-items:center;font-size:13px;color:#9ab0ff;margin-top:6px}
-  .key{display:inline-flex;align-items:center;gap:6px}
-  .sw{width:14px;height:14px;border-radius:3px;border:1px solid #ffffff44}
-  .sw.green{background:rgba(0,200,0,.35)}
-  .sw.red{background:rgba(255,0,0,.35)}
 
   .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:6px;margin:10px 0}
   .slot{background:#0f1738;border:1px solid #ffffff24;aspect-ratio:3/5;border-radius:8px;position:relative}
@@ -51,7 +45,7 @@
 </style>
 </head>
 <body>
-<header>📱 Phone Box — Align to white ticks on blue strip • 12×5</header>
+<header>📱 Phone Box — rectangles above each number (12×5)</header>
 
 <main>
   <section class="card" id="left">
@@ -60,9 +54,7 @@
       <canvas id="overlay"></canvas>
     </div>
 
-    <div id="legend">
-      <span class="key"><span class="sw green"></span> Phone present</span>
-      <span class="key"><span class="sw red"></span> Empty</span>
+    <div class="toolbar">
       <span class="pill" id="status"></span>
     </div>
 
@@ -89,47 +81,38 @@
 
     <div class="row" style="margin-top:10px">
       <div>
-        <label>Row height % (area ABOVE blue strip)</label>
-        <input id="rowPct" type="range" min="45" max="95" step="5" value="70">
-      </div>
-      <div>
         <label>Edge crop % (ignore left/right)</label>
         <input id="edgePct" type="range" min="0" max="15" step="1" value="5">
       </div>
-    </div>
-
-    <div class="row" style="margin-top:10px">
       <div>
         <label>Blue sensitivity</label>
         <input id="blueSens" type="range" min="10" max="90" step="5" value="45">
       </div>
-      <div>
-        <label>Tick sensitivity (white-on-blue)</label>
-        <input id="tickSens" type="range" min="10" max="90" step="5" value="55">
-      </div>
     </div>
 
     <div class="row" style="margin-top:10px">
       <div>
+        <label>Row height % (area ABOVE blue strip)</label>
+        <input id="rowPct" type="range" min="50" max="95" step="5" value="70">
+      </div>
+      <div>
         <label>Guide opacity</label>
         <input id="guideAlpha" type="range" min="20" max="100" step="5" value="90">
       </div>
-      <div>
-        <label>&nbsp;</label>
-        <div class="toolbar">
-          <button id="auto" class="primary">Auto Align</button>
-          <button id="tapRows">Quick Tap Rows</button>
-          <button id="resetRows">Reset Rows</button>
-          <button id="analyze" disabled>Colorize + Compare</button>
-          <label style="margin-left:8px"><input id="showGuides" type="checkbox" checked> Show guides</label>
-        </div>
-      </div>
+    </div>
+
+    <div class="toolbar">
+      <button id="auto" class="primary">Auto Align</button>
+      <button id="tapRows">Quick Tap Rows</button>
+      <button id="resetRows">Reset</button>
+      <button id="analyze" disabled>Colorize + Compare</button>
+      <label><input id="showGuides" type="checkbox" checked> Show guides</label>
     </div>
   </section>
 </main>
 
 <script>
-/* ========= Elements & State ========= */
+/* ---------- Elements & helpers ---------- */
 const img = document.getElementById('img');
 const stage = document.getElementById('stage');
 const overlay = document.getElementById('overlay');
@@ -145,42 +128,39 @@ const boxGrid = document.getElementById('boxGrid');
 const photo = document.getElementById('photo');
 const autoBtn = document.getElementById('auto');
 const tapRowsBtn = document.getElementById('tapRows');
-const resetRowsBtn = document.getElementById('resetRows');
+const resetBtn = document.getElementById('resetRows');
 const analyzeBtn = document.getElementById('analyze');
 const showGuidesEl = document.getElementById('showGuides');
 
-const rowPctEl = document.getElementById('rowPct');
 const edgePctEl = document.getElementById('edgePct');
 const blueSensEl = document.getElementById('blueSens');
-const tickSensEl = document.getElementById('tickSens');
+const rowPctEl = document.getElementById('rowPct');
 const guideAlphaEl = document.getElementById('guideAlpha');
 
-function setStatus(t){ statusEl.textContent=t||''; }
-function rowHeight(){ return +rowPctEl.value/100; }     // scan band ABOVE the blue strip
-function edgeCrop(){ return +edgePctEl.value/100; }
-function blueSens(){ return +blueSensEl.value/100; }
-function tickSens(){ return +tickSensEl.value/100; }
-function guideAlpha(){ return +guideAlphaEl.value/100; }
+const guideAlpha = ()=> +guideAlphaEl.value/100;
+const edgeCrop   = ()=> +edgePctEl.value/100;
+const blueSens   = ()=> +blueSensEl.value/100;
+const rowHeight  = ()=> +rowPctEl.value/100;
 
-let current=null;         // {image, W, H}
-let roster=[];            // [{...}]
-let rowBottoms=[];        // 5 y positions (top edge of blue strip)
-let boundsByRow=[];       // per row: 13 x-positions (slot walls)
-let rois=[];              // 60 rects
-let occMask=[];           // 60 booleans
+const setStatus = t => statusEl.textContent=t||'';
 
-let quickTapActive=false;
-let quickTapYs=[];
+/* ---------- State ---------- */
+let current=null;          // {image,W,H}
+let roster=[];
+let rowBottoms=[];         // y of top edge of blue bar (row bottom)
+let boundsByRow=[];        // 13 x's per row
+let rois=[];               // 60 rects
+let occMask=[];            // booleans
+let quickTap=false, quickYs=[];
 
-/* ========= Boxes ========= */
+/* ---------- Boxes ---------- */
 (function fillBoxes(){
   const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
-  grades.forEach(g=>letters.forEach(l=>ids.push(g+l)));
-  ids.push('SM1','SM2');
+  grades.forEach(g=>letters.forEach(l=>ids.push(g+l))); ids.push('SM1','SM2');
   boxSel.innerHTML = ids.map(x=>`<option>${x}</option>`).join('');
 })();
 
-/* ========= CSV (tiny) ========= */
+/* ---------- CSV ---------- */
 function parseCSV(text){
   const rows=[]; let row=[], cur='', inQ=false; const push=()=>{row.push(cur);cur='';};
   for(let i=0;i<text.length;i++){
@@ -193,62 +173,42 @@ function parseCSV(text){
   const header = rows.shift().map(h=>h.trim());
   return rows.filter(r=>r.some(x=>x&&x.trim()!=='')).map(r=>{const o={}; header.forEach((h,i)=>o[h]=r[i]||''); return o;});
 }
-function loadRosterFromRepo(){
+async function loadRoster(){
   rosterStatus.textContent='Loading /data/roster.csv…';
-  const tries=['./data/roster.csv','/data/roster.csv'];
-  (async ()=>{
-    for(const p of tries){
-      try{
-        const res = await fetch(p,{cache:'no-store'});
-        if(res.ok){
-          const txt=await res.text();
-          roster=parseCSV(txt);
-          rosterStatus.textContent='Loaded /data/roster.csv ✓';
-          return;
-        }
-      }catch(_){}
+  try{
+    const res = await fetch('/data/roster.csv',{cache:'no-store'});
+    if(res.ok){
+      roster=parseCSV(await res.text());
+      rosterStatus.textContent='Loaded /data/roster.csv ✓';
+      return;
     }
-    rosterStatus.textContent='Could not load /data/roster.csv (you can upload below).';
-  })();
+  }catch{}
+  rosterStatus.textContent='Could not load /data/roster.csv (upload below).';
 }
-loadRosterFromRepo();
-
+loadRoster();
 rosterFile.addEventListener('change', ()=>{
   const f=rosterFile.files[0]; if(!f) return;
   const r=new FileReader();
   r.onload=()=>{ roster=parseCSV(r.result||''); rosterStatus.textContent='Loaded from file ✓'; };
   r.readAsText(f);
 });
-
 function namesForBox(boxId){
   const out={};
-  for(const row of roster){
-    const sec=(row['Security Number']||row['SecurityNumber']||'').toString().toUpperCase().replace(/\s+/g,'');
-    const m=sec.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/); if(!m) continue;
-    const box=m[1], slot=parseInt(m[2],10); if(box===boxId) out[slot]=row['Full Name']||row['FullName']||'';
-  } return out;
-}
-function drawNamesGrid(namesBySlot={}){
-  boxGrid.innerHTML='';
-  for(let r=0;r<5;r++){
-    for(let c=0;c<12;c++){
-      const idx=r*12+c+1;
-      const d=document.createElement('div'); d.className='slot';
-      const s=document.createElement('span'); s.textContent=namesBySlot[idx]||`#${idx}`;
-      d.appendChild(s); boxGrid.appendChild(d);
-    }
+  for(const r of roster){
+    const sec=(r['Security Number']||r['SecurityNumber']||'').toUpperCase().replace(/\s+/g,'');
+    const m=sec.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/);
+    if(!m) continue; const box=m[1], slot=+m[2];
+    if(box===boxId) out[slot]=r['Full Name']||r['FullName']||'';
   }
+  return out;
 }
 
-/* ========= Photo ========= */
+/* ---------- UI ---------- */
 photo.addEventListener('change', e=>{
   const f=e.target.files[0]; if(!f) return;
-  const url=URL.createObjectURL(f); const im=new Image();
-  im.onload=()=>{
-    current={image:im,W:im.naturalWidth,H:im.naturalHeight};
-    img.src=url; img.style.display='block';
-    sizeStage(); draw(); setStatus('Photo loaded. Use Auto Align or Quick Tap Rows.');
-  };
+  const url=URL.createObjectURL(f);
+  const im=new Image();
+  im.onload=()=>{ current={image:im,W:im.naturalWidth,H:im.naturalHeight}; img.src=url; img.style.display='block'; sizeStage(); draw(); setStatus('Photo loaded. Tap Auto Align.'); };
   im.onerror=()=>setStatus('Could not load image.');
   im.src=url;
 });
@@ -256,41 +216,29 @@ window.addEventListener('resize', sizeStage);
 function sizeStage(){
   if(!current) return;
   const W=stage.clientWidth;
-  const H=Math.max(240, Math.round(W*(current.H/current.W)));
-  stage.style.height=H+'px';
-  overlay.width=W; overlay.height=H;
+  const H=Math.max(240,Math.round(W*(current.H/current.W)));
+  stage.style.height=H+'px'; overlay.width=W; overlay.height=H;
 }
 
-/* ========= Buttons ========= */
+/* ---------- Buttons ---------- */
 autoBtn.addEventListener('click', async ()=>{
-  if(!current){ alert('Upload a photo first.'); return; }
+  if(!current) return alert('Upload a photo first.');
   analyzeBtn.disabled=true;
-  setStatus('Detecting blue strips (row bottoms)…');
-  rowBottoms = await findNumberRowsUltra(current.image, edgeCrop(), blueSens());
-  if(rowBottoms.length!==5){
-    setStatus('Could not auto-detect 5 strips. Tap “Quick Tap Rows” and tap each blue strip once.');
-    draw(); return;
-  }
-  await continueFromRowBottoms();
+  setStatus('Detecting blue strips…');
+  rowBottoms = await findBlueStrips(current.image, edgeCrop(), blueSens());
+  if(rowBottoms.length!==5){ setStatus('Could not auto-detect 5 strips. Use Quick Tap Rows (tap each strip once).'); draw(); return; }
+  await buildWallsAndROIs();
 });
-
-tapRowsBtn.addEventListener('click', ()=>{
-  if(!current){ alert('Upload a photo first.'); return; }
-  quickTapActive=true; quickTapYs=[]; setStatus('Tap each blue number strip once (5 taps)…');
-});
-resetRowsBtn.addEventListener('click', ()=>{
-  rowBottoms=[]; boundsByRow=[]; rois=[]; occMask=[]; draw(); setStatus('Rows cleared.');
-});
+tapRowsBtn.addEventListener('click', ()=>{ if(!current) return alert('Upload a photo first.'); quickTap=true; quickYs=[]; setStatus('Tap each blue strip once (5 taps)…'); });
+resetBtn.addEventListener('click', ()=>{ rowBottoms=[]; boundsByRow=[]; rois=[]; occMask=[]; draw(); setStatus('Reset.'); });
 
 analyzeBtn.addEventListener('click', ()=>{
   if(!rois.length) return alert('Align rows first.');
   occMask = rois.map(r => slotOccupied(cropROI(r)));
-  paintOverlay(); // green/red fills
-
-  resultsBody.innerHTML='';
+  paintOverlay();
   const names = namesForBox(boxSel.value||'');
-  drawNamesGrid(names);
-  for(let i=0;i<rois.length;i++){
+  resultsBody.innerHTML='';
+  for(let i=0;i<60;i++){
     const slot=i+1, expected=names[slot]||'';
     const status = occMask[i] ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
     const tr=document.createElement('tr');
@@ -298,292 +246,150 @@ analyzeBtn.addEventListener('click', ()=>{
     tr.innerHTML=`<td>${slot}</td><td>${expected}</td><td><span class="pill">${status}</span></td>`;
     resultsBody.appendChild(tr);
   }
-  // tint grid
-  [...boxGrid.children].forEach((div,idx)=>{
-    div.classList.remove('present','empty');
-    div.classList.add( occMask[idx] ? 'present' : 'empty' );
-  });
+  // tiny grid tint
+  [...boxGrid.children].forEach((d,i)=>{ d.classList.remove('present','empty'); d.classList.add(occMask[i]?'present':'empty'); });
   setStatus('Colorized: green=phone, red=empty.');
 });
-
-/* ========= Stage Quick-Tap ========= */
 stage.addEventListener('pointerdown', async (e)=>{
-  if(!quickTapActive || !current) return;
+  if(!quickTap||!current) return;
   const {iy}=screenToImage(e.clientX,e.clientY);
-  quickTapYs.push(iy);
-  drawTapMarker(iy);
-  if(quickTapYs.length<5){
-    setStatus(`Tap noted (${quickTapYs.length}/5)…`);
-  }else{
-    quickTapActive=false;
-    rowBottoms = quickTapYs.slice().sort((a,b)=>a-b);
-    setStatus('Rows set. Locking to ticks…');
-    await continueFromRowBottoms();
-  }
+  quickYs.push(iy); drawTapLine(iy);
+  if(quickYs.length===5){ quickTap=false; rowBottoms=quickYs.slice().sort((a,b)=>a-b); await buildWallsAndROIs(); }
 });
-function drawTapMarker(yImg){
-  const sy=overlay.height/current.H; const y=yImg*sy;
-  ctx.save(); ctx.strokeStyle='rgba(50,208,255,.9)'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(overlay.width,y); ctx.stroke();
-  ctx.restore();
-}
 
-/* ========= Pipeline after rowBottoms ========= */
-async function continueFromRowBottoms(){
-  boundsByRow=[]; rois=[]; occMask=[];
-  const gaps=[]; for(let i=1;i<rowBottoms.length;i++) gaps.push(rowBottoms[i]-rowBottoms[i-1]);
-  const avgGap = gaps.length ? gaps.reduce((a,b)=>a+b,0)/gaps.length : Math.round(current.H/6);
-
+/* ---------- Core pipeline ---------- */
+async function buildWallsAndROIs(){
+  boundsByRow=[]; rois=[];
   for(const yBottom of rowBottoms){
-    // First try: align to white ticks inside the blue bar
-    let bounds = await wallsFromBlueTicks(current.image, yBottom, edgeCrop(), tickSens());
-    // Fallback: foam walls above the strip
-    if(!bounds || bounds.length!==13){
-      bounds = await wallsFromFoam(current.image, yBottom, avgGap, edgeCrop(), 0.22 /*foam band height*/, 1.1 /*side gap*/);
+    // 1) find blue band interior (xL..xR) for the row
+    const {xL,xR} = await blueBandBounds(current.image, yBottom, edgeCrop(), blueSens());
+    // 2) split into 12 equal columns → 13 walls; then refine start  ±period*0.25 to hit the white ticks
+    let walls = split12WithRefine(current.image, yBottom, xL, xR);
+    if(walls.length!==13){ // absolute fallback to equal split
+      const per=(xR-xL)/12; walls=[...Array(13)].map((_,k)=>Math.round(xL+k*per));
     }
-    boundsByRow.push(bounds);
+    boundsByRow.push(walls);
   }
-
-  // Build ROIs strictly ABOVE the blue strip
+  // 3) ROIs ABOVE the blue strip
+  const gaps=[]; for(let i=1;i<rowBottoms.length;i++) gaps.push(rowBottoms[i]-rowBottoms[i-1]);
+  const avgGap = gaps.length?gaps.reduce((a,b)=>a+b,0)/gaps.length: Math.round(current.H/6);
   rois=[];
   for(let r=0;r<5;r++){
     const yBottom=rowBottoms[r];
-    const yTop = Math.max(0, yBottom - Math.max(12, Math.round(avgGap * rowHeight())));
-    const b=boundsByRow[r];
-    for(let i=0;i<12;i++){
-      const x0=b[i], x1=b[i+1];
-      rois.push({ x:x0, y:yTop, w:Math.max(1,(x1-x0)), h:Math.max(8, yBottom-yTop), row:r, col:i });
-    }
+    const yTop = Math.max(0, yBottom - Math.max(12, Math.round(avgGap*rowHeight())));
+    const w=boundsByRow[r];
+    for(let i=0;i<12;i++){ rois.push({x:w[i], y:yTop, w:Math.max(1,w[i+1]-w[i]), h:Math.max(8,yBottom-yTop), row:r, col:i}); }
   }
-  draw(); analyzeBtn.disabled=false; setStatus('Aligned to blue ticks. Tap “Colorize + Compare”.');
+  draw(); analyzeBtn.disabled=false; setStatus('Aligned to numbers (12 equal columns). Tap “Colorize + Compare”.');
 }
 
-/* ========= Draw (guides) ========= */
-function draw(){
-  ctx.clearRect(0,0,overlay.width,overlay.height); if(!current) return;
-  const sx=overlay.width/current.W, sy=overlay.height/current.H, a=guideAlpha();
-
-  if(showGuidesEl.checked){
-    // cyan lines at row BOTTOMS
-    ctx.strokeStyle=`rgba(50,208,255,${a})`; ctx.lineWidth=2;
-    for(const y of rowBottoms){ ctx.beginPath(); ctx.moveTo(0,y*sy); ctx.lineTo(overlay.width,y*sy); ctx.stroke(); }
-    ctx.fillStyle=`rgba(50,208,255,${a})`; ctx.font='12px system-ui';
-    for(const y of rowBottoms){ ctx.fillText('bottom', 6, y*sy - 6); }
-
-    // white vertical walls (should sit on white tick lines)
-    ctx.strokeStyle=`rgba(255,255,255,${a})`; ctx.lineWidth=1.6;
-    for(let r=0;r<boundsByRow.length;r++){
-      const y=rowBottoms[r]*sy;
-      (boundsByRow[r]||[]).forEach(x=>{ const xx=x*sx; ctx.beginPath(); ctx.moveTo(xx,y-40); ctx.lineTo(xx,y+40); ctx.stroke(); });
-    }
-  }
-  // slot rectangles
-  if(rois.length){ ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth=2; for(const r of rois){ ctx.strokeRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy);} }
-}
-function paintOverlay(){
-  if(!rois.length) return;
-  const sx=overlay.width/current.W, sy=overlay.height/current.H;
-  ctx.clearRect(0,0,overlay.width,overlay.height);
-  for(let i=0;i<rois.length;i++){
-    const r=rois[i]; const fill = occMask[i] ? 'rgba(0,200,0,.35)' : 'rgba(255,0,0,.35)';
-    ctx.fillStyle=fill; ctx.fillRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy);
-  }
-  if(showGuidesEl.checked){
-    ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=1.5;
-    for(const r of rois){ ctx.strokeRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy); }
-  }
-}
-
-/* ========= Vision core ========= */
-/* (1) Find 5 blue bars = row bottoms */
-async function findNumberRowsUltra(imgEl, edge, sens){
+/* ---------- Row detection: blue bars (row bottoms) ---------- */
+async function findBlueStrips(imgEl, edge, sens){
   const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
-  const c=document.createElement('canvas'); c.width=W; c.height=H;
-  const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
-  const im=g.getImageData(0,0,W,H), data=im.data;
-
+  const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
+  g.drawImage(imgEl,0,0,W,H); const {data}=g.getImageData(0,0,W,H);
   const x0=Math.round(W*edge), x1=Math.round(W*(1-edge));
-  const passes=[
-    {sMin:0.32, vMin:0.30 + sens*0.30, whiteV:0.80, whiteS:0.30, darkV:0.22},
-    {sMin:0.26, vMin:0.24 + sens*0.20, whiteV:0.76, whiteS:0.34, darkV:0.25},
-    {sMin:0.20, vMin:0.18 + sens*0.10, whiteV:0.72, whiteS:0.36, darkV:0.28},
-  ];
-  const hueMin=190, hueMax=265;     // school blue range
-  const topCut=Math.round(H*0.04), botCut=Math.round(H*0.96);
+  const hueMin=190,hueMax=265;
 
-  for(const P of passes){
-    const blue=new Float32Array(H), whiteOnBlue=new Float32Array(H), darkOnBlue=new Float32Array(H), edgeMag=new Float32Array(H);
-    for(let y=topCut;y<botCut;y++){
-      let cnt=0, b=0, w=0, d=0, e=0;
-      for(let x=x0;x<=x1;x+=2){
-        const i=(y*W+x)*4;
-        const rr=data[i], gg=data[i+1], bb=data[i+2];
-        const {h,s,v}=rgb2hsv(rr,gg,bb);
-        const isBlue=(h>hueMin&&h<hueMax)&&s>=P.sMin&&v>=P.vMin;
-        if(isBlue){
-          b++;
-          if(s<=P.whiteS && v>=P.whiteV) w++;
-          if(v<=P.darkV) d++;
-          if(x+2<=x1){
-            const j=(y*W+(x+2))*4;
-            const L1=0.299*rr+0.587*gg+0.114*bb;
-            const L2=0.299*data[j]+0.587*data[j+1]+0.114*data[j+2];
-            e += Math.abs(L2-L1);
-          }
-        }
-        cnt++;
-      }
-      blue[y]=cnt?b/cnt:0;
-      whiteOnBlue[y]=cnt?w/cnt:0;
-      darkOnBlue[y]=cnt?d/cnt:0;
-      edgeMag[y]=cnt?e/cnt:0;
+  const score=new Float32Array(H);
+  for(let y=0;y<H;y++){
+    let b=0,cnt=0;
+    for(let x=x0;x<=x1;x+=2){
+      const i=(y*W+x)*4, r0=data[i],g0=data[i+1],b0=data[i+2];
+      const {h,s,v}=rgb2hsv(r0,g0,b0);
+      if(h>hueMin&&h<hueMax&&s>(0.18+0.5*sens)&&v>(0.22+0.3*sens)) b++;
+      cnt++;
     }
-    const sb=smooth(blue,7), sw=smooth(whiteOnBlue,7), sd=smooth(darkOnBlue,7), se=smooth(edgeMag,7);
-
-    let maxWht=0; for(const v of sw) if(v>maxWht) maxWht=v;
-    let maxDrk=0; for(const v of sd) if(v>maxDrk) maxDrk=v;
-    let maxEdg=0; for(const v of se) if(v>maxEdg) maxEdg=v;
-
-    const score=new Float32Array(H);
-    for(let y=0;y<H;y++){
-      const digits = Math.max( maxWht?sw[y]/maxWht:0, maxDrk?sd[y]/maxDrk:0 );
-      const edges  = maxEdg?se[y]/maxEdg:0;
-      score[y] = sb[y] * Math.max(digits, edges*0.7);
-    }
-
-    let rows = pickSpread(peaksAbove(score, 0.35), 5, Math.round(H/7));
-    if(rows.length>=5){
-      // refine to the TOP edge of the blue band, which equals the bottom of the phone row
-      const refined = rows.slice(0,5).sort((a,b)=>a-b).map(p=>{
-        const win=10; let M=0; for(let y=Math.max(0,p-win); y<=Math.min(H-1,p+win); y++) M=Math.max(M, sb[y]);
-        const T=M*0.5; let topy=p; for(let y=p;y>=0;y--){ if(sb[y]>=T) topy=y; else break; }
-        return Math.round(topy/r);   // back to full image coordinates
-      });
-      return refined;
-    }
+    score[y]=cnt?b/cnt:0;
   }
-  return [];
+  const s2=smooth(score,6);
+  const peaks=pickSpread(peaksAbove(s2,0.35),5,Math.round(H/7));
+  const rows = peaks.slice(0,5).sort((a,b)=>a-b).map(p=>Math.round(p/r));
+  return rows;
 }
 
-/* (2) Vertical walls from BLUE TICKS (preferred) */
-async function wallsFromBlueTicks(imgEl, yBottom, edge, tickSensitivity){
+/* ---------- Blue band bounds per row ---------- */
+async function blueBandBounds(imgEl, yBottom, edge, sens){
   const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
-  const c=document.createElement('canvas'); c.width=W; c.height=H;
-  const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
-  const im=g.getImageData(0,0,W,H), data=im.data;
+  const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
+  g.drawImage(imgEl,0,0,W,H); const {data}=g.getImageData(0,0,W,H);
 
   const L=Math.round(W*edge), R=Math.round(W*(1-edge));
-  // Band **inside** the blue bar (a few pixels *below* yBottom)
-  const bandH = Math.max(8, Math.round(H*0.018)); // ~10–20 px depending on scale
-  const y0 = Math.min(H-2, Math.round(yBottom*r) + 2);
-  const y1 = Math.min(H-1, y0 + bandH);
+  const bandH=Math.max(8,Math.round(H*0.018));
+  const y0=Math.min(H-2, Math.round(yBottom*r)+2), y1=Math.min(H-1, y0+bandH);
+  const hueMin=190,hueMax=265, sMin=0.18+0.3*sens, vMin=0.22+0.2*sens;
 
-  // Build whiteness-on-blue score per x
-  const white=new Float32Array(W).fill(0);
+  const blue=new Float32Array(W).fill(0);
   for(let x=L;x<=R;x++){
-    let cnt=0, sc=0;
+    let cnt=0, b=0;
     for(let y=y0;y<=y1;y++){
-      const i=(y*W+x)*4;
-      const rr=data[i], gg=data[i+1], bb=data[i+2];
+      const i=(y*W+x)*4, rr=data[i],gg=data[i+1],bb=data[i+2];
       const {h,s,v}=rgb2hsv(rr,gg,bb);
-      // "on blue bar": hue ~ blue, reasonably saturated, decent value
-      const onBlue = (h>190&&h<265)&&(v>0.20)&&(s>0.18);
-      if(onBlue){
-        // white tick lines: low saturation + high value
-        const isWhite = (s < (0.15 + 0.35*(1-tickSensitivity))) && (v > (0.75 - 0.25*(1-tickSensitivity)));
-        if(isWhite) sc++;
-        cnt++;
-      }
+      if(h>hueMin&&h<hueMax&&s>sMin&&v>vMin) b++;
+      cnt++;
     }
-    white[x] = cnt ? sc/cnt : 0;
+    blue[x]=cnt?b/cnt:0;
   }
-  const sw = smooth(white, 4);
-
-  // Estimate slot period (12 slots → 12 segments → ~ (R-L)/12)
-  const guess = (R-L)/12;
-  const per = findPeriod(sw, L, R, Math.max(8, Math.round(guess*0.7)), Math.round(guess*1.3));
-  if(!per || !isFinite(per)) return null;
-
-  // Choose start offset in [L..L+per) that maximizes whiteness at k*per positions (k=0..12)
-  let bestS=L, bestScore=-1;
-  for(let s=L; s<Math.min(R, L+per); s++){
-    let sc=0;
-    for(let k=0;k<=12;k++){
-      const x=Math.round(s + k*per);
-      if(x<L||x>R) continue;
-      // local max around column
-      let loc=sw[x];
-      if(x-2>=L) loc=Math.max(loc,sw[x-1],sw[x-2]);
-      if(x+2<=R) loc=Math.max(loc,sw[x+1],sw[x+2]);
-      sc+=loc;
-    }
-    if(sc>bestScore){ bestScore=sc; bestS=s; }
-  }
-
-  // Build 13 walls from the best starting offset + period
-  const walls=[];
-  for(let k=0;k<=12;k++){
-    walls.push( clamp(Math.round(bestS + k*per), L, R) );
-  }
-  const scaleX = imgEl.naturalWidth/W;
-  return walls.map(x=>Math.round(x*scaleX));
+  const sb=smooth(blue,4);
+  const thr = 0.35*Math.max(...sb);
+  let xL=L, xR=R;
+  for(let x=L;x<=R;x++){ if(sb[x]>thr){ xL=x; break; } }
+  for(let x=R;x>=L;x--){ if(sb[x]>thr){ xR=x; break; } }
+  // pad inwards a touch to skip frame bleed
+  const pad=Math.round((xR-xL)*0.01);
+  xL+=pad; xR-=pad;
+  // fallbacks
+  if(xR-xL<50){ xL=L; xR=R; }
+  const scaleX=imgEl.naturalWidth/W;
+  return {xL:Math.round(xL*scaleX), xR:Math.round(xR*scaleX)};
 }
 
-/* (3) Fallback: foam walls above the strip (kept from earlier) */
-async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
+/* ---------- Split 12 + refine to white ticks ---------- */
+function split12WithRefine(imgEl, yBottom, xL, xR){
+  const per=(xR-xL)/12;
+  const startCandidates=[];
+  const delta=per*0.25; // ±25% period
+  for(let s=xL-delta; s<=xL+delta; s+=Math.max(1, per/40)){
+    startCandidates.push(s);
+  }
+  const bestStart = scoreStartOnWhite(imgEl, yBottom, startCandidates, per);
+  if(bestStart==null) return [];
+  const walls=[...Array(13)].map((_,k)=>Math.round(bestStart+k*per));
+  return walls;
+}
+function scoreStartOnWhite(imgEl, yBottom, starts, per){
   const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
-  const c=document.createElement('canvas'); c.width=W; c.height=H;
-  const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
-  const im=g.getImageData(0,0,W,H);
+  const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
+  g.drawImage(imgEl,0,0,W,H); const im=g.getImageData(0,0,W,H), data=im.data;
+  const band= Math.max(8,Math.round(H*0.018));
+  const y0=Math.min(H-2, Math.round(yBottom*r)+2), y1=Math.min(H-1, y0+band);
 
-  // band immediately ABOVE the numbers
-  const bandH=Math.max(8,Math.round((avgGap*r)*foamFrac));
-  const y1=Math.min(H-1, Math.round((yBottom*r) - 2));
-  const y0=Math.max(0, y1 - bandH);
-
-  const L=Math.round(W*edge), R=Math.round(W*(1-edge));
-  const bright=new Float32Array(W).fill(0), grad=new Float32Array(W).fill(0);
-  for(let x=L;x<=R;x++){
-    let s=0; for(let y=y0;y<=y1;y++){ const i=(y*W+x)*4; s += 0.299*im.data[i]+0.587*im.data[i+1]+0.114*im.data[i+2]; }
-    bright[x]=s/(y1-y0+1);
-  }
-  for(let x=L+1;x<=R-1;x++){ grad[x]=Math.abs(bright[x+1]-bright[x-1]); }
-  const signal=smooth(grad,8);
-
-  const width=R-L, guess=width/13;
-  const period = findPeriod(signal, L, R, Math.round(guess*0.8), Math.round(guess*1.3));
-  const start0 = L + (sideGapW||1.1)*period;
-
-  let bestS=start0, bestScore=-1;
-  const search=Math.round(period*0.45);
-  for(let s=Math.max(L,start0-search); s<=Math.min(R,start0+search); s++){
-    let sc=0;
-    for(let k=0;k<13;k++){
-      const x=Math.round(s + k*period);
-      if(x<L||x>R) continue;
-      let loc=signal[x]; if(x-2>=L) loc=Math.max(loc,signal[x-1],signal[x-2]);
-      if(x+2<=R) loc=Math.max(loc,signal[x+1],signal[x+2]);
-      sc+=loc;
+  let best=null, bestScore=-1;
+  for(const s0 of starts){
+    const s = s0*r; const p = per*r;
+    let sum=0;
+    for(let k=0;k<=12;k++){
+      const x=Math.round(s+k*p); if(x<0||x>=W) continue;
+      // whiteness at this column within the blue band
+      let sc=0, cnt=0;
+      for(let y=y0;y<=y1;y++){
+        const i=(y*W+x)*4, rr=data[i],gg=data[i+1],bb=data[i+2];
+        const {s:sat,v}=rgb2hsv(rr,gg,bb);
+        if(v>0.72 && sat<0.35) sc++; // light / white
+        cnt++;
+      }
+      sum += cnt?sc/cnt:0;
     }
-    if(sc>bestScore){ bestScore=sc; bestS=s; }
+    if(sum>bestScore){ bestScore=sum; best=s0; }
   }
-
-  let walls=[]; for(let k=0;k<13;k++){ walls.push(clamp(Math.round(bestS + k*period), L, R)); }
-  for(let i=1;i<walls.length;i++){ if(walls[i]<=walls[i-1]) walls[i]=walls[i-1]+1; }
-
-  const scaleX = imgEl.naturalWidth/W;
-  return walls.map(x=>Math.round(x*scaleX));
+  return best;
 }
 
-/* (4) Occupancy detection */
-function cropROI(r){
-  const c=document.createElement('canvas'); c.width=r.w; c.height=r.h;
-  c.getContext('2d').drawImage(current.image, r.x,r.y,r.w,r.h, 0,0,r.w,r.h);
-  return c;
-}
+/* ---------- Occupancy ---------- */
+function cropROI(r){ const c=document.createElement('canvas'); c.width=r.w; c.height=r.h; c.getContext('2d').drawImage(current.image,r.x,r.y,r.w,r.h,0,0,r.w,r.h); return c; }
 function slotOccupied(c){
   const k=c.getContext('2d');
   const cx=Math.round(c.width*0.18), cw=Math.round(c.width*0.64);
@@ -596,38 +402,50 @@ function slotOccupied(c){
   return best>=Math.round(cw*0.22);
 }
 
-/* ========= Helpers ========= */
-function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0)h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
-function smooth(a,w){const o=new Float32Array(a.length); for(let i=0;i<a.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=a.length) continue; s+=a[j]; c++;} o[i]=s/c;} return o;}
-function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
-function peaksAbove(series, frac){
-  const m=Math.max(...series); const out=[]; if(!m) return out;
-  for(let y=1;y<series.length-1;y++){
-    if(series[y]>=frac*m && series[y]>=series[y-1] && series[y]>=series[y+1]) out.push(y);
+/* ---------- Drawing ---------- */
+function draw(){
+  ctx.clearRect(0,0,overlay.width,overlay.height); if(!current) return;
+  const sx=overlay.width/current.W, sy=overlay.height/current.H, a=guideAlpha();
+
+  if(showGuidesEl.checked){
+    // Cyan lines at blue-strip tops (row bottoms)
+    ctx.strokeStyle=`rgba(50,208,255,${a})`; ctx.lineWidth=2;
+    for(const y of rowBottoms){ ctx.beginPath(); ctx.moveTo(0,y*sy); ctx.lineTo(overlay.width,y*sy); ctx.stroke(); }
+    // White vertical walls
+    ctx.strokeStyle=`rgba(255,255,255,${a})`; ctx.lineWidth=1.6;
+    for(const w of boundsByRow){ (w||[]).forEach(x=>{ const xx=x*sx; ctx.beginPath(); ctx.moveTo(xx,0); ctx.lineTo(xx,overlay.height); ctx.stroke(); }); }
   }
-  return out;
+  if(rois.length){ ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth=2; for(const r of rois){ ctx.strokeRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy); } }
 }
-function pickSpread(peaks, need, minDist){
-  const out=[]; for(const p of peaks){ if(out.every(q=>Math.abs(q-p)>minDist)) out.push(p); if(out.length>=need) break; }
-  return out.sort((a,b)=>a-b);
-}
-function findPeriod(sig,L,R,lagMin,lagMax){
-  let bestLag=lagMin, best=-1;
-  for(let lag=lagMin; lag<=lagMax; lag++){
-    let sum=0; for(let x=L; x+lag<=R; x++) sum += sig[x]*sig[x+lag];
-    if(sum>best){ best=sum; bestLag=lag; }
+function paintOverlay(){
+  if(!rois.length) return;
+  const sx=overlay.width/current.W, sy=overlay.height/current.H;
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  for(let i=0;i<rois.length;i++){
+    const r=rois[i]; ctx.fillStyle = occMask[i] ? 'rgba(0,200,0,.35)' : 'rgba(255,0,0,.35)';
+    ctx.fillRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy);
   }
-  return Math.max(10,bestLag);
-}
-function screenToImage(cx,cy){
-  const r=overlay.getBoundingClientRect();
-  const x=(cx - r.left)/r.width * current.W;
-  const y=(cy - r.top)/r.height * current.H;
-  return {ix:x, iy:y};
+  if(showGuidesEl.checked){
+    ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=1.5;
+    for(const r of rois){ ctx.strokeRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy); }
+  }
 }
 
-/* ========= Boot ========= */
-(function drawNamesGridEmpty(){ boxGrid.innerHTML=''; for(let r=0;r<5;r++){ for(let c=0;c<12;c++){ const d=document.createElement('div'); d.className='slot'; const s=document.createElement('span'); s.textContent=`#${r*12+c+1}`; d.appendChild(s); boxGrid.appendChild(d);} }})();
+/* ---------- Utilities ---------- */
+function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0)h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
+function smooth(a,w){const o=new Float32Array(a.length); for(let i=0;i<a.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=a.length) continue; s+=a[j]; c++;} o[i]=s/c;} return o;}
+function peaksAbove(series, frac){ const m=Math.max(...series); const out=[]; if(!m) return out; for(let y=1;y<series.length-1;y++){ if(series[y]>=frac*m && series[y]>=series[y-1] && series[y]>=series[y+1]) out.push(y);} return out; }
+function pickSpread(peaks, need, minDist){ const out=[]; for(const p of peaks){ if(out.every(q=>Math.abs(q-p)>minDist)) out.push(p); if(out.length>=need) break; } return out.sort((a,b)=>a-b); }
+function screenToImage(cx,cy){ const r=overlay.getBoundingClientRect(); const x=(cx-r.left)/r.width*current.W; const y=(cy-r.top)/r.height*current.H; return {ix:x, iy:y}; }
+function drawTapLine(yImg){ const sy=overlay.height/current.H, y=yImg*sy; ctx.save(); ctx.strokeStyle='rgba(50,208,255,.9)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(overlay.width,y); ctx.stroke(); ctx.restore(); }
+
+/* ---------- Stage taps to set rows ---------- */
+stage.addEventListener('pointerdown', e=>{
+  if(!quickTap||!current) return;
+});
+
+/* ---------- Boot ---------- */
+(function initGrid(){ boxGrid.innerHTML=''; for(let r=0;r<5;r++){ for(let c=0;c<12;c++){ const d=document.createElement('div'); d.className='slot'; const s=document.createElement('span'); s.textContent=`#${r*12+c+1}`; d.appendChild(s); boxGrid.appendChild(d);} }})();
 </script>
 </body>
 </html>
