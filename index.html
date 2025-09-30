@@ -77,8 +77,11 @@
           </div>
           <div>
             <label>Calibration</label>
-            <button id="calibrateBtn">Use this photo to calibrate slots</button>
-            <small>Do this once per box. We save normalized 12×5 regions.</small>
+            <div style="display:flex; gap:8px; flex-wrap:wrap">
+              <button id="calibrateBtn">Manual 12×5 grid (fallback)</button>
+              <button id="autoBlueBtn" class="primary">Auto‑calibrate (align to blue labels)</button>
+            </div>
+            <small>Auto‑calibration anchors the grid to the blue number strip and detects vertical channels.</small>
           </div>
         </div>
         <div id="preview" style="margin-top:12px"><small>Photo preview appears here</small></div>
@@ -183,14 +186,12 @@ rosterChoice.addEventListener('change',()=>{
   rosterUpload.style.display = rosterChoice.value==='upload' ? 'block':'none';
 });
 
-// Calibrate: divide photo into a 12×5 grid, find the foam channels via simple grid assumption.
-// Fast MVP: we store normalized ROIs based on the photo bounds; later runs reuse them.
+// Manual fallback: centered normalized 12×5 grid
 const calibrateBtn = document.getElementById('calibrateBtn');
 calibrateBtn.addEventListener('click',()=>{
   const box = document.getElementById('boxSelect').value || 'AUTO';
   if(!currentImage) return alert('Take or upload a photo first.');
   const rois=[]; const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
-  // Assume centered tray; we keep generous margins; tweak if needed in box_config.json later.
   const padX=0.08*W, padY=0.10*H; const gridW = W-2*padX, gridH = H-2*padY;
   const cellW = gridW/12, cellH = gridH/5;
   for(let r=0;r<5;r++){
@@ -200,7 +201,70 @@ calibrateBtn.addEventListener('click',()=>{
   }
   boxConfig[box] = { rois };
   localStorage.setItem('phonebox_config', JSON.stringify(boxConfig));
-  alert('Calibrated this box using a simple 12×5 grid. You can refine later in box_config.json.');
+  alert('Calibrated with a simple 12×5 grid. For best results use “Auto‑calibrate (align to blue labels)”.');
+});
+
+// Auto‑calibration: anchor to blue number strip + detect vertical channels
+const autoBlueBtn = document.getElementById('autoBlueBtn');
+autoBlueBtn.addEventListener('click', async ()=>{
+  if(!currentImage) return alert('Take or upload a photo first.');
+  const box = document.getElementById('boxSelect').value || 'AUTO';
+  statusEl.textContent='Auto‑calibrating to blue labels…';
+
+  // Downscale for speed
+  const maxW=1000; const r=Math.min(1, maxW/currentImage.naturalWidth);
+  const c=document.createElement('canvas'); c.width=Math.round(currentImage.naturalWidth*r); c.height=Math.round(currentImage.naturalHeight*r);
+  const ctx=c.getContext('2d'); ctx.drawImage(currentImage,0,0,c.width,c.height);
+  const imgData = ctx.getImageData(0,0,c.width,c.height).data;
+
+  // 1) Find y of the blue label strip by counting blue‑dominant pixels per row (focus on bottom half)
+  let bestY= Math.floor(c.height*0.65), bestCount=-1;
+  for(let y=Math.floor(c.height*0.50); y<c.height; y++){
+    let cnt=0; const o=y*c.width*4;
+    for(let x=0; x<c.width; x++){
+      const i=o+x*4; const r=imgData[i], g=imgData[i+1], b=imgData[i+2];
+      if(b>120 && b>r+40 && b>g+30) cnt++; // strong blue
+    }
+    if(cnt>bestCount){ bestCount=cnt; bestY=y; }
+  }
+  // Slightly above the strip for the bottom boundary of row 5
+  const yBlue = bestY;
+
+  // 2) Detect vertical channels using column edge projection (Sobel‑lite via intensity diff)
+  const colEnergy=new Float32Array(c.width);
+  for(let x=1; x<c.width-1; x++){
+    let s=0; for(let y=0; y<c.height; y++){
+      const i=(y*c.width+x)*4, il=(y*c.width+x-1)*4, ir=(y*c.width+x+1)*4;
+      const yl=0.299*imgData[il]+0.587*imgData[il+1]+0.114*imgData[il+2];
+      const yr=0.299*imgData[ir]+0.587*imgData[ir+1]+0.114*imgData[ir+2];
+      s+=Math.abs(yr-yl);
+    }
+    colEnergy[x]=s;
+  }
+  // Pick 13 boundaries with non‑max suppression
+  const idx=[...colEnergy].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]);
+  const verts=[]; const minDist=Math.round(c.width/18);
+  for(const [,i] of idx){ if(verts.every(v=>Math.abs(v-i)>minDist)) verts.push(i); if(verts.length>=13) break; }
+  verts.sort((a,b)=>a-b);
+  if(verts[0]>5) verts.unshift(0); if(verts[verts.length-1]<c.width-5) verts.push(c.width-1);
+
+  // 3) Build horizontal boundaries: from a top margin down to yBlue (5 rows)
+  const topY = Math.round(c.height*0.10); // safe top
+  const yBounds=[]; for(let k=0;k<=5;k++){ yBounds.push(Math.round(topY + (yBlue-topY)*k/5)); }
+
+  // 4) Build ROIs (normalized to original image)
+  const rois=[]; for(let rIdx=0;rIdx<5;rIdx++){
+    const y0=yBounds[rIdx], y1=yBounds[rIdx+1];
+    for(let cIdx=0;cIdx<12;cIdx++){
+      const x0=verts[cIdx], x1=verts[cIdx+1];
+      rois.push({ x:x0/c.width, y:y0/c.height, w:(x1-x0)/c.width, h:(y1-y0)/c.height });
+    }
+  }
+
+  boxConfig[box] = { rois };
+  localStorage.setItem('phonebox_config', JSON.stringify(boxConfig));
+  statusEl.textContent='Auto‑calibration complete (aligned to blue numbers).';
+});
 });
 
 async function ensureModel(){
