@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box — Auto Overlay + Roster (12×5)</title>
+<title>Phone Box — Foam-Wall Split + Roster (12×5)</title>
 <style>
   :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0;--accent:#32d0ff}
   *{box-sizing:border-box}
@@ -41,7 +41,7 @@
 </style>
 </head>
 <body>
-<header>📱 Phone Box — Auto Overlay + Roster (12×5)</header>
+<header>📱 Phone Box — Foam-Wall Split + Roster (12×5)</header>
 
 <main>
   <section class="card" id="left">
@@ -81,7 +81,7 @@
     <div class="row" style="margin-top:10px">
       <div>
         <label>Slot inset % (avoid foam walls)</label>
-        <input id="insetPct" type="range" min="0" max="25" step="1" value="10">
+        <input id="insetPct" type="range" min="2" max="25" step="1" value="12">
       </div>
       <div>
         <label>Blue sensitivity</label>
@@ -92,10 +92,6 @@
     <div class="toolbar">
       <button id="auto" class="primary">Auto Align</button>
       <button id="analyze" disabled>Analyze & Compare</button>
-      <label class="hint"><input id="fine" type="checkbox" style="vertical-align:middle"> Fine-tune (drag rows & edges)</label>
-    </div>
-
-    <div class="toolbar">
       <label class="hint"><input id="showGuides" type="checkbox" checked style="vertical-align:middle"> Show guides</label>
       <span id="status" class="pill"></span>
     </div>
@@ -103,7 +99,7 @@
 </main>
 
 <script>
-/* ========= Elements & State ========= */
+/* ===== Elements & State ===== */
 const img = document.getElementById('img');
 const stage = document.getElementById('stage');
 const overlay = document.getElementById('overlay');
@@ -115,18 +111,16 @@ const photo = document.getElementById('photo');
 const autoBtn = document.getElementById('auto');
 const analyzeBtn = document.getElementById('analyze');
 const showGuidesEl = document.getElementById('showGuides');
-const fineEl = document.getElementById('fine');
 const statusEl = document.getElementById('status');
 const boxGrid = document.getElementById('boxGrid');
 const resultsBody = document.getElementById('results');
-
-function setStatus(t){ statusEl.textContent=t||''; }
 
 const rowPctEl = document.getElementById('rowPct');
 const edgePctEl = document.getElementById('edgePct');
 const insetPctEl = document.getElementById('insetPct');
 const blueSensEl = document.getElementById('blueSens');
 
+function setStatus(t){ statusEl.textContent=t||''; }
 function rowHeight(){ return parseInt(rowPctEl.value,10)/100; }
 function edgeCrop(){ return parseInt(edgePctEl.value,10)/100; }
 function insetFrac(){ return parseInt(insetPctEl.value,10)/100; }
@@ -134,13 +128,12 @@ function blueSens(){ return parseInt(blueSensEl.value,10)/100; }
 
 let current=null;         // {image, W, H}
 let roster=[];            // [{...}]
-let rowTops=[];           // 5 y positions
+let rowTops=[];           // 5 y positions (top of blue bars)
 let LR=[];                // 5×[L,R]
-let boundsByRow=[];       // 5×13
+let boundsByRow=[];       // 5×13 boundaries
 let rois=[];              // 60 rects
-let dragging=null;        // {type:'row'|'L'|'R', row:i, dy/dx}
 
-/* ========= Boxes ========= */
+/* ===== Box options ===== */
 (function fillBoxes(){
   const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
   grades.forEach(g=>letters.forEach(l=>ids.push(g+l)));
@@ -148,32 +141,24 @@ let dragging=null;        // {type:'row'|'L'|'R', row:i, dy/dx}
   boxSel.innerHTML = ids.map(x=>`<option>${x}</option>`).join('');
 })();
 
-/* ========= CSV Parser (no deps) ========= */
+/* ===== CSV parser (small, no deps) ===== */
 function parseCSV(text){
   const rows=[]; let row=[], cur='', inQ=false; const push=()=>{row.push(cur); cur='';};
   for(let i=0;i<text.length;i++){
     const ch=text[i], nx=text[i+1];
-    if(inQ){
-      if(ch==='"' && nx==='"'){ cur+='"'; i++; }
-      else if(ch==='"'){ inQ=false; }
+    if(inQ){ if(ch==='"' && nx==='"'){ cur+='"'; i++; } else if(ch==='"'){ inQ=false; } else cur+=ch; }
+    else{ if(ch==='"'){ inQ=true; } else if(ch===','){ push(); }
+      else if(ch==='\n' || ch==='\r'){ if(ch==='\r' && nx==='\n') i++; push(); rows.push(row); row=[]; }
       else cur+=ch;
-    }else{
-      if(ch==='"'){ inQ=true; }
-      else if(ch===','){ push(); }
-      else if(ch==='\n' || ch==='\r'){
-        if(ch==='\r' && nx==='\n') i++;
-        push(); rows.push(row); row=[];
-      }else cur+=ch;
     }
   }
   push(); if(row.length) rows.push(row);
-  // header -> objects
   const header = rows.shift().map(h=>h.trim());
   return rows.filter(r=>r.length && r.some(x=>x.trim()!==''))
              .map(r=>{ const o={}; header.forEach((h,i)=>o[h]=r[i]||''); return o; });
 }
 
-/* ========= Photo Preview ========= */
+/* ===== Photo preview sizing ===== */
 photo.addEventListener('change', e=>{
   const f=e.target.files[0]; if(!f) return;
   const url=URL.createObjectURL(f);
@@ -181,8 +166,7 @@ photo.addEventListener('change', e=>{
   im.onload=()=>{
     current={image:im, W:im.naturalWidth, H:im.naturalHeight};
     img.src=url; img.style.display='block';
-    sizeToImageAspect();
-    draw();
+    sizeToImageAspect(); draw();
     setStatus('Photo loaded. Tap “Auto Align”.');
   };
   im.onerror=()=>setStatus('Could not load image.');
@@ -197,7 +181,7 @@ function sizeToImageAspect(){
   overlay.width=W; overlay.height=H;
 }
 
-/* ========= Roster ========= */
+/* ===== Roster load ===== */
 rosterFile.addEventListener('change', ()=>{
   const f=rosterFile.files[0]; if(!f) return;
   const r=new FileReader();
@@ -227,24 +211,33 @@ function drawNamesGrid(namesBySlot={}){
   }
 }
 
-/* ========= Auto Align (no OCR) ========= */
+/* ===== Auto Align: rows + foam walls ===== */
 autoBtn.addEventListener('click', async ()=>{
   if(!current){ alert('Upload a photo first.'); return; }
   analyzeBtn.disabled = true;
-  setStatus('Finding blue bars…');
+  setStatus('Detecting blue number bars…');
 
   rowTops = await findBlueBars(current.image, edgeCrop(), blueSens());
-  if(rowTops.length!==5){ setStatus('Could not find 5 blue bars. Bump “Blue sensitivity” or “Edge crop %”.'); draw(); return; }
+  if(rowTops.length!==5){ setStatus('Could not find 5 blue bars. Try increasing “Blue sensitivity” or “Edge crop %”.'); draw(); return; }
 
-  setStatus('Measuring row edges…');
+  setStatus('Locating row left/right…');
   LR = await findLRForRows(current.image, rowTops, edgeCrop());
 
+  setStatus('Detecting foam walls (12 slots)…');
   boundsByRow = [];
-  for(let r=0;r<5;r++){ boundsByRow.push(equalBounds(LR[r][0], LR[r][1], 12)); }
-
   const gaps=[]; for(let i=1;i<rowTops.length;i++) gaps.push(rowTops[i]-rowTops[i-1]);
   const avgGap = gaps.reduce((a,b)=>a+b,0)/gaps.length;
 
+  for(let r=0;r<5;r++){
+    const yBottom=rowTops[r];
+    const yTop=Math.max(0, Math.round(yBottom-avgGap*rowHeight()));
+    const [L,R]=LR[r];
+
+    const bounds = await wallsToBounds(current.image, L, R, yTop, yBottom);
+    boundsByRow.push(bounds);
+  }
+
+  // Build ROIs from bounds
   rois=[];
   for(let r=0;r<5;r++){
     const yBottom=rowTops[r];
@@ -256,12 +249,13 @@ autoBtn.addEventListener('click', async ()=>{
       rois.push({x:x0+inset, y:yTop, w:Math.max(1,(x1-x0-2*inset)), h:yBottom-yTop, row:r, col:i});
     }
   }
+
   draw();
   analyzeBtn.disabled=false;
-  setStatus('Aligned. (Tip: enable “Fine-tune” to drag rows/edges if needed.)');
+  setStatus('Aligned. (Foam-wall split).');
 });
 
-/* ========= Analyze ========= */
+/* ===== Analyze ===== */
 analyzeBtn.addEventListener('click', ()=>{
   if(!rois.length) return alert('Auto Align first.');
   if(!boxSel.value) return alert('Choose a Box (e.g., 9B, 10C, SM1).');
@@ -289,7 +283,7 @@ analyzeBtn.addEventListener('click', ()=>{
   setStatus('Compared to roster.');
 });
 
-/* ========= Drawing ========= */
+/* ===== Drawing ===== */
 function draw(){
   ctx.clearRect(0,0,overlay.width,overlay.height);
   if(!current) return;
@@ -324,97 +318,44 @@ function draw(){
   }
 }
 
-/* ========= Fine-tune (drag) ========= */
-stage.addEventListener('pointerdown', e=>{
-  if(!fineEl.checked || !current) return;
-  const {ix,iy}=screenToImage(e.clientX,e.clientY);
-  // pick closest row line first
-  let ri=-1, best=12e9;
-  for(let i=0;i<rowTops.length;i++){
-    const d=Math.abs(rowTops[i]-iy);
-    if(d<best){best=d; ri=i;}
-  }
-  const nearRow = best<30;
-  if(nearRow){
-    // check L/R proximity too
-    const [L,R]=LR[ri]||[0,current.W];
-    const dL=Math.abs(L-ix), dR=Math.abs(R-ix);
-    if(dL<20){ dragging={type:'L', row:ri, dx:L-ix}; }
-    else if(dR<20){ dragging={type:'R', row:ri, dx:R-ix}; }
-    else { dragging={type:'row', row:ri, dy:rowTops[ri]-iy}; }
-    stage.setPointerCapture(e.pointerId);
-  }
-});
-stage.addEventListener('pointermove', e=>{
-  if(!dragging||!current) return;
-  const {ix,iy}=screenToImage(e.clientX,e.clientY);
-  const r=dragging.row;
-  if(dragging.type==='row'){
-    // keep order (no crossing rows)
-    const min = r?rowTops[r-1]+20:0;
-    const max = r<4?rowTops[r+1]-20:current.H-2;
-    rowTops[r]=clamp(iy+dragging.dy,min,max);
-  }else if(dragging.type==='L'){
-    const L=clamp(ix+dragging.dx, 0, (LR[r]?LR[r][1]-20:current.W-20));
-    const old=LR[r]||[0,current.W]; LR[r]=[L,old[1]];
-    boundsByRow[r]=remapBounds(boundsByRow[r], old, LR[r]);
-  }else if(dragging.type==='R'){
-    const R=clamp(ix+dragging.dx, (LR[r]?LR[r][0]+20:20), current.W);
-    const old=LR[r]||[0,current.W]; LR[r]=[old[0],R];
-    boundsByRow[r]=remapBounds(boundsByRow[r], old, LR[r]);
-  }
-  rebuildROIs(); draw();
-});
-stage.addEventListener('pointerup', ()=>dragging=null);
-
-function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
-function remapBounds(b, oldLR, newLR){
-  const [oL,oR]=oldLR, [nL,nR]=newLR;
-  return b.map(x=> Math.round(nL + ( (x-oL)/Math.max(1,(oR-oL)) )*(nR-nL) ));
-}
-function rebuildROIs(){
-  if(!rowTops.length||!boundsByRow.length) return;
-  rois=[];
-  const gaps=[]; for(let i=1;i<rowTops.length;i++) gaps.push(rowTops[i]-rowTops[i-1]);
-  const avgGap=gaps.reduce((a,b)=>a+b,0)/gaps.length;
-  for(let r=0;r<5;r++){
-    const yBottom=rowTops[r];
-    const yTop=Math.max(0, Math.round(yBottom-avgGap*rowHeight()));
-    const b=boundsByRow[r];
-    for(let i=0;i<12;i++){
-      const x0=b[i], x1=b[i+1];
-      const inset=Math.round((x1-x0)*insetFrac());
-      rois.push({x:x0+inset, y:yTop, w:Math.max(1,(x1-x0-2*inset)), h:yBottom-yTop, row:r, col:i});
-    }
-  }
-}
-
-/* ========= Image/Color helpers ========= */
-function screenToImage(cx,cy){
-  const r=overlay.getBoundingClientRect();
-  const x=(cx-r.left)/r.width*current.W;
-  const y=(cy-r.top)/r.height*current.H;
-  return {ix:x, iy:y};
-}
+/* ===== Image helpers ===== */
 function cropROI(r){
   const c=document.createElement('canvas'); c.width=r.w; c.height=r.h;
   c.getContext('2d').drawImage(current.image, r.x,r.y,r.w,r.h, 0,0,r.w,r.h);
   return c;
 }
 function slotOccupied(c){
+  // Combine darkness + edge density for robustness
   const k=c.getContext('2d');
   const cx=Math.round(c.width*0.20), cw=Math.round(c.width*0.60);
-  const cy=Math.round(c.height*0.15), ch=Math.round(c.height*0.60);
+  const cy=Math.round(c.height*0.10), ch=Math.round(c.height*0.65);
   const {data}=k.getImageData(cx,cy,cw,ch);
-  const cols=new Float32Array(cw).fill(0), dark=130;
-  for(let y=0;y<ch;y++){ for(let x=0;x<cw;x++){ const i=(y*cw+x)*4; const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; if(L<dark) cols[x]++; } }
-  for(let x=0;x<cw;x++) cols[x]/=ch;
-  let best=0,run=0; for(let x=0;x<cw;x++){ if(cols[x]>0.5){ run++; best=Math.max(best,run);} else run=0; }
-  return best>=Math.round(cw*0.25);
-}
-function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0)h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
 
-/* ========= Blue bar detection ========= */
+  let darkCnt=0, edgeCnt=0, total=cw*ch;
+  for(let y=1;y<ch-1;y++){
+    for(let x=1;x<cw-1;x++){
+      const i=(y*cw+x)*4;
+      const L = 0.299*data[i]+0.587*data[i+1]+0.114*data[i+2];
+      if(L<150) darkCnt++;
+      // simple gradient magnitude
+      const ix=(y*cw+(x+1))*4, ix2=(y*cw+(x-1))*4;
+      const iy=((y+1)*cw+x)*4, iy2=((y-1)*cw+x)*4;
+      const gx=(0.299*(data[ix]-data[ix2]))+(0.587*(data[ix+1]-data[ix2+1]))+(0.114*(data[ix+2]-data[ix2+2]));
+      const gy=(0.299*(data[iy]-data[iy2]))+(0.587*(data[iy+1]-data[iy2+1]))+(0.114*(data[iy+2]-data[iy2+2]));
+      const mag=Math.abs(gx)+Math.abs(gy);
+      if(mag>55) edgeCnt++;
+    }
+  }
+  const dark=darkCnt/total, edge=edgeCnt/total;
+  return (dark>0.33) || (edge>0.07);
+}
+
+/* ===== Color & math ===== */
+function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0)h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
+function smooth(a,w){const o=new Float32Array(a.length); for(let i=0;i<a.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=a.length) continue; s+=a[j]; c++;} o[i]=s/c;} return o;}
+function quantile(a,q){const b=[...a].sort((x,y)=>x-y); const i=Math.max(0,Math.min(b.length-1,Math.floor(q*(b.length-1)))); return b[i];}
+
+/* ===== Blue bar detection (rows) ===== */
 async function findBlueBars(imgEl, edgeCrop, sens){
   const maxW=1400, r=Math.min(1, maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
@@ -422,10 +363,9 @@ async function findBlueBars(imgEl, edgeCrop, sens){
   const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
   const {data}=g.getImageData(0,0,W,H);
 
-  const hueMin=190, hueMax=265, sMin=0.28, vMin=0.18 + sens*0.35; // sensitivity raises vMin
+  const hueMin=190, hueMax=265, sMin=0.28, vMin=0.18 + sens*0.35;
   const x0=Math.round(W*edgeCrop), x1=Math.round(W*(1-edgeCrop));
   const frac=new Float32Array(H);
-
   for(let y=0;y<H;y++){
     let cnt=0, blue=0;
     for(let x=x0;x<=x1;x+=2){
@@ -434,21 +374,23 @@ async function findBlueBars(imgEl, edgeCrop, sens){
     }
     frac[y]=cnt?blue/cnt:0;
   }
-  const s = smooth(frac,7);
-  const peaks = topPeaks(s,5,Math.round(H/8));
+  const s=smooth(frac,7);
+  const peaks=topPeaks(s,5,Math.round(H/8));
   const win=Math.round(H*0.035), tops=[];
   for(const p of peaks){
     let M=0; for(let y=Math.max(0,p-win); y<=Math.min(H-1,p+win); y++) M=Math.max(M,s[y]);
-    const T=M*0.5; let top=p;
-    for(let y=p;y>=0;y--){ if(s[y]>=T) top=y; else break; }
+    const T=M*0.5; let top=p; for(let y=p;y>=0;y--){ if(s[y]>=T) top=y; else break; }
     tops.push(top);
   }
   return tops.sort((a,b)=>a-b).map(y=>Math.round(y/r));
 }
-function smooth(a,w){const o=new Float32Array(a.length); for(let i=0;i<a.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=a.length) continue; s+=a[j]; c++;} o[i]=s/c;} return o;}
-function topPeaks(s,count,minDist){const idx=[...s].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const out=[]; for(const [,i] of idx){ if(out.every(j=>Math.abs(j-i)>minDist)) out.push(i); if(out.length>=count) break; } return out.sort((a,b)=>a-b);}
+function topPeaks(s,count,minDist){
+  const idx=[...s].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const out=[];
+  for(const [,i] of idx){ if(out.every(j=>Math.abs(j-i)>minDist)) out.push(i); if(out.length>=count) break; }
+  return out.sort((a,b)=>a-b);
+}
 
-/* ========= Row L/R detection ========= */
+/* ===== L/R per row (from blue band width) ===== */
 async function findLRForRows(imgEl, tops, edgeCrop){
   const maxW=1400; const r=Math.min(1, maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
@@ -497,9 +439,80 @@ function largestRun(col, pad){
   }
   return best;
 }
-function quantile(a,q){const b=[...a].sort((x,y)=>x-y); const i=Math.max(0,Math.min(b.length-1,Math.floor(q*(b.length-1)))); return b[i];}
 
-/* ========= Bounds helper ========= */
+/* ===== NEW: Foam-wall → 12 slots (11 internal walls) ===== */
+async function wallsToBounds(imgEl, L, R, yTop, yBottom){
+  // Crop band a bit above the labels to avoid blue strip influence
+  const padY = Math.round((yBottom-yTop)*0.10);
+  const y0 = yTop + padY;
+  const y1 = yBottom - padY;
+
+  const w = R - L; if (w < 24) return equalBounds(L,R,12);
+
+  // sample mean luminance per column
+  const c=document.createElement('canvas'); c.width=imgEl.naturalWidth; c.height=imgEl.naturalHeight;
+  const g=c.getContext('2d'); g.drawImage(imgEl,0,0);
+  const {data,width:W}=g.getImageData(0,0,imgEl.naturalWidth,imgEl.naturalHeight);
+
+  const cols = new Float32Array(w);
+  for(let x=0;x<w;x++){
+    const X = L + x;
+    let sum=0, cnt=0;
+    for(let y=y0; y<=y1; y+=2){
+      const i=(y*W+X)*4;
+      const Lm = 0.299*data[i]+0.587*data[i+1]+0.114*data[i+2];
+      sum+=Lm; cnt++;
+    }
+    cols[x]=sum/Math.max(1,cnt);
+  }
+
+  // smooth and peak-pick the brightest columns (foam walls)
+  const s = smooth(cols, Math.max(2, Math.floor(w/120)));
+  const minDist = Math.max(6, Math.floor(w/14));     // keep spacing near slot width
+  let peaks = pickPeaks(s, 11, minDist);            // 11 internal walls
+
+  // if we under/over-detected, repair to 11
+  peaks = fixCountTo(peaks, 11, w);
+
+  // convert to boundaries: [L] + (L+peaks[i]) + [R]
+  const bounds=[L];
+  for(const p of peaks) bounds.push(L + p);
+  bounds.push(R);
+
+  // ensure strictly increasing & inside [L,R]
+  for(let i=1;i<bounds.length;i++) bounds[i]=Math.max(bounds[i], bounds[i-1]+1);
+  bounds[bounds.length-1]=R;
+  return bounds;
+}
+function pickPeaks(arr, k, minDist){
+  const idx=[...arr].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const out=[];
+  for(const [,i] of idx){ if(out.every(j=>Math.abs(j-i)>minDist)) out.push(i); if(out.length>=k) break; }
+  return out.sort((a,b)=>a-b);
+}
+function fixCountTo(peaks, k, w){
+  peaks = peaks.slice().sort((a,b)=>a-b);
+  if(peaks.length===k) return peaks;
+  // too many → merge closest
+  while(peaks.length>k){
+    let bi=0, best=1e9;
+    for(let i=0;i<peaks.length-1;i++){
+      const d=peaks[i+1]-peaks[i]; if(d<best){best=d; bi=i;}
+    }
+    peaks.splice(bi,2, Math.round((peaks[bi]+peaks[bi+1])/2));
+  }
+  // too few → insert into widest gaps
+  while(peaks.length<k){
+    let bi=0, best=-1;
+    const all=[0,...peaks,w]; // include edges
+    for(let i=0;i<all.length-1;i++){
+      const d=all[i+1]-all[i]; if(d>best){best=d; bi=i;}
+    }
+    peaks.splice(bi,0, Math.round((all[bi]+all[bi+1])/2));
+  }
+  return peaks;
+}
+
+/* ===== Bounds helper ===== */
 function equalBounds(L,R,n){ const step=(R-L)/n; const b=[Math.round(L)]; for(let i=1;i<n;i++) b.push(Math.round(L+i*step)); b.push(Math.round(R)); return b; }
 </script>
 </body>
