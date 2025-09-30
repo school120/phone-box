@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box — 12 slots aligned to blue numbers</title>
+<title>Phone Box — 12×5 Slots Above Numbers</title>
 <style>
   :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0}
   *{box-sizing:border-box}
@@ -18,7 +18,6 @@
   small{color:var(--muted)}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 
-  /* Preview */
   #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0c1333;min-height:240px;touch-action:none}
   #img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;z-index:0}
   #overlay{position:absolute;inset:0;pointer-events:none;z-index:1}
@@ -45,21 +44,18 @@
 </style>
 </head>
 <body>
-<header>📱 Phone Box — rectangles above each number (12×5)</header>
+<header>📱 Phone Box — rectangles above each printed number (12×5)</header>
 
 <main>
-  <section class="card" id="left">
+  <section class="card">
     <div id="stage">
       <img id="img" alt="preview">
       <canvas id="overlay"></canvas>
     </div>
-
     <div class="toolbar">
       <span class="pill" id="status"></span>
     </div>
-
     <div class="grid" id="boxGrid"></div>
-
     <table>
       <thead><tr><th>Slot</th><th>Expected</th><th>Status</th></tr></thead>
       <tbody id="results"></tbody>
@@ -82,7 +78,7 @@
     <div class="row" style="margin-top:10px">
       <div>
         <label>Edge crop % (ignore left/right)</label>
-        <input id="edgePct" type="range" min="0" max="15" step="1" value="5">
+        <input id="edgePct" type="range" min="0" max="15" step="1" value="4">
       </div>
       <div>
         <label>Blue sensitivity</label>
@@ -92,8 +88,8 @@
 
     <div class="row" style="margin-top:10px">
       <div>
-        <label>Row height % (area ABOVE blue strip)</label>
-        <input id="rowPct" type="range" min="50" max="95" step="5" value="70">
+        <label>Row height % of gap</label>
+        <input id="rowPct" type="range" min="50" max="90" step="5" value="70">
       </div>
       <div>
         <label>Guide opacity</label>
@@ -112,7 +108,7 @@
 </main>
 
 <script>
-/* ---------- Elements & helpers ---------- */
+/* ===== UI refs ===== */
 const img = document.getElementById('img');
 const stage = document.getElementById('stage');
 const overlay = document.getElementById('overlay');
@@ -128,7 +124,7 @@ const boxGrid = document.getElementById('boxGrid');
 const photo = document.getElementById('photo');
 const autoBtn = document.getElementById('auto');
 const tapRowsBtn = document.getElementById('tapRows');
-const resetBtn = document.getElementById('resetRows');
+const resetRowsBtn = document.getElementById('resetRows');
 const analyzeBtn = document.getElementById('analyze');
 const showGuidesEl = document.getElementById('showGuides');
 
@@ -137,30 +133,29 @@ const blueSensEl = document.getElementById('blueSens');
 const rowPctEl = document.getElementById('rowPct');
 const guideAlphaEl = document.getElementById('guideAlpha');
 
-const guideAlpha = ()=> +guideAlphaEl.value/100;
 const edgeCrop   = ()=> +edgePctEl.value/100;
 const blueSens   = ()=> +blueSensEl.value/100;
-const rowHeight  = ()=> +rowPctEl.value/100;
+const rowFrac    = ()=> +rowPctEl.value/100;
+const guideAlpha = ()=> +guideAlphaEl.value/100;
+const setStatus  = t => statusEl.textContent = t || '';
 
-const setStatus = t => statusEl.textContent=t||'';
-
-/* ---------- State ---------- */
-let current=null;          // {image,W,H}
+/* ===== State ===== */
+let current=null;          // {image, W, H}
 let roster=[];
-let rowBottoms=[];         // y of top edge of blue bar (row bottom)
-let boundsByRow=[];        // 13 x's per row
+let rowBottoms=[];         // y (full-res) of top edge of blue number strip
+let boundsByRow=[];        // per row: 13 xs
 let rois=[];               // 60 rects
-let occMask=[];            // booleans
+let occMask=[];
 let quickTap=false, quickYs=[];
 
-/* ---------- Boxes ---------- */
+/* ===== Box list ===== */
 (function fillBoxes(){
   const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
   grades.forEach(g=>letters.forEach(l=>ids.push(g+l))); ids.push('SM1','SM2');
   boxSel.innerHTML = ids.map(x=>`<option>${x}</option>`).join('');
 })();
 
-/* ---------- CSV ---------- */
+/* ===== Roster ===== */
 function parseCSV(text){
   const rows=[]; let row=[], cur='', inQ=false; const push=()=>{row.push(cur);cur='';};
   for(let i=0;i<text.length;i++){
@@ -177,11 +172,7 @@ async function loadRoster(){
   rosterStatus.textContent='Loading /data/roster.csv…';
   try{
     const res = await fetch('/data/roster.csv',{cache:'no-store'});
-    if(res.ok){
-      roster=parseCSV(await res.text());
-      rosterStatus.textContent='Loaded /data/roster.csv ✓';
-      return;
-    }
+    if(res.ok){ roster=parseCSV(await res.text()); rosterStatus.textContent='Loaded /data/roster.csv ✓'; return; }
   }catch{}
   rosterStatus.textContent='Could not load /data/roster.csv (upload below).';
 }
@@ -203,34 +194,34 @@ function namesForBox(boxId){
   return out;
 }
 
-/* ---------- UI ---------- */
+/* ===== Image / layout ===== */
 photo.addEventListener('change', e=>{
   const f=e.target.files[0]; if(!f) return;
-  const url=URL.createObjectURL(f);
-  const im=new Image();
+  const url=URL.createObjectURL(f); const im=new Image();
   im.onload=()=>{ current={image:im,W:im.naturalWidth,H:im.naturalHeight}; img.src=url; img.style.display='block'; sizeStage(); draw(); setStatus('Photo loaded. Tap Auto Align.'); };
-  im.onerror=()=>setStatus('Could not load image.');
-  im.src=url;
+  im.onerror=()=>setStatus('Could not load image.'); im.src=url;
 });
 window.addEventListener('resize', sizeStage);
-function sizeStage(){
-  if(!current) return;
-  const W=stage.clientWidth;
-  const H=Math.max(240,Math.round(W*(current.H/current.W)));
-  stage.style.height=H+'px'; overlay.width=W; overlay.height=H;
-}
+function sizeStage(){ if(!current) return; const W=stage.clientWidth, H=Math.max(240,Math.round(W*(current.H/current.W))); stage.style.height=H+'px'; overlay.width=W; overlay.height=H; }
 
-/* ---------- Buttons ---------- */
+/* ===== Buttons ===== */
 autoBtn.addEventListener('click', async ()=>{
   if(!current) return alert('Upload a photo first.');
   analyzeBtn.disabled=true;
   setStatus('Detecting blue strips…');
-  rowBottoms = await findBlueStrips(current.image, edgeCrop(), blueSens());
-  if(rowBottoms.length!==5){ setStatus('Could not auto-detect 5 strips. Use Quick Tap Rows (tap each strip once).'); draw(); return; }
+  rowBottoms = await detectBlueStrips(current.image, edgeCrop(), blueSens());
+  if(rowBottoms.length!==5){ setStatus('Could not find 5 strips. Use Quick Tap Rows and tap each strip.'); draw(); return; }
   await buildWallsAndROIs();
 });
-tapRowsBtn.addEventListener('click', ()=>{ if(!current) return alert('Upload a photo first.'); quickTap=true; quickYs=[]; setStatus('Tap each blue strip once (5 taps)…'); });
-resetBtn.addEventListener('click', ()=>{ rowBottoms=[]; boundsByRow=[]; rois=[]; occMask=[]; draw(); setStatus('Reset.'); });
+tapRowsBtn.addEventListener('click', ()=>{ if(!current) return alert('Upload a photo first.'); quickTap=true; quickYs=[]; setStatus('Tap each blue number strip once (5 taps)…'); });
+resetRowsBtn.addEventListener('click', ()=>{ rowBottoms=[]; boundsByRow=[]; rois=[]; occMask=[]; draw(); setStatus('Reset.'); });
+
+stage.addEventListener('pointerdown', async (e)=>{
+  if(!quickTap||!current) return;
+  const {iy}=screenToImage(e.clientX,e.clientY);
+  quickYs.push(iy); drawTapLine(iy);
+  if(quickYs.length===5){ quickTap=false; rowBottoms=quickYs.slice().sort((a,b)=>a-b); await buildWallsAndROIs(); }
+});
 
 analyzeBtn.addEventListener('click', ()=>{
   if(!rois.length) return alert('Align rows first.');
@@ -246,149 +237,150 @@ analyzeBtn.addEventListener('click', ()=>{
     tr.innerHTML=`<td>${slot}</td><td>${expected}</td><td><span class="pill">${status}</span></td>`;
     resultsBody.appendChild(tr);
   }
-  // tiny grid tint
+  // mini grid
   [...boxGrid.children].forEach((d,i)=>{ d.classList.remove('present','empty'); d.classList.add(occMask[i]?'present':'empty'); });
   setStatus('Colorized: green=phone, red=empty.');
 });
-stage.addEventListener('pointerdown', async (e)=>{
-  if(!quickTap||!current) return;
-  const {iy}=screenToImage(e.clientX,e.clientY);
-  quickYs.push(iy); drawTapLine(iy);
-  if(quickYs.length===5){ quickTap=false; rowBottoms=quickYs.slice().sort((a,b)=>a-b); await buildWallsAndROIs(); }
-});
 
-/* ---------- Core pipeline ---------- */
+/* ===== Core: build 60 slot ROIs from blue strips ===== */
 async function buildWallsAndROIs(){
   boundsByRow=[]; rois=[];
+  // 1) Find xL..xR (largest continuous blue region) per row; split into 12 equal slots; optional tick refine.
   for(const yBottom of rowBottoms){
-    // 1) find blue band interior (xL..xR) for the row
-    const {xL,xR} = await blueBandBounds(current.image, yBottom, edgeCrop(), blueSens());
-    // 2) split into 12 equal columns → 13 walls; then refine start  ±period*0.25 to hit the white ticks
-    let walls = split12WithRefine(current.image, yBottom, xL, xR);
-    if(walls.length!==13){ // absolute fallback to equal split
-      const per=(xR-xL)/12; walls=[...Array(13)].map((_,k)=>Math.round(xL+k*per));
-    }
+    const {xL,xR} = await bandInterior(current.image, yBottom, edgeCrop(), blueSens());
+    const walls = wallsEqualSplitWithTickNudge(current.image, yBottom, xL, xR);
     boundsByRow.push(walls);
   }
-  // 3) ROIs ABOVE the blue strip
+  // Sanity: guarantee 13 per row
+  for(let r=0;r<boundsByRow.length;r++){
+    if(!boundsByRow[r] || boundsByRow[r].length!==12){
+      const {xL,xR} = await bandInterior(current.image, rowBottoms[r], edgeCrop(), blueSens());
+      boundsByRow[r] = forceEqualWalls(xL,xR);
+    }
+  }
+  // 2) Build ROIs above strip with height = 70% of gap to next strip (or avg gap for last row)
   const gaps=[]; for(let i=1;i<rowBottoms.length;i++) gaps.push(rowBottoms[i]-rowBottoms[i-1]);
   const avgGap = gaps.length?gaps.reduce((a,b)=>a+b,0)/gaps.length: Math.round(current.H/6);
   rois=[];
   for(let r=0;r<5;r++){
-    const yBottom=rowBottoms[r];
-    const yTop = Math.max(0, yBottom - Math.max(12, Math.round(avgGap*rowHeight())));
-    const w=boundsByRow[r];
-    for(let i=0;i<12;i++){ rois.push({x:w[i], y:yTop, w:Math.max(1,w[i+1]-w[i]), h:Math.max(8,yBottom-yTop), row:r, col:i}); }
+    const yB=rowBottoms[r];
+    const gap = (r<4 ? rowBottoms[r+1]-rowBottoms[r] : avgGap);
+    const h = Math.max(12, Math.round(gap*rowFrac()));
+    const yT = Math.max(0, yB - h);
+    const W = boundsByRow[r];
+    for(let i=0;i<12;i++){
+      const x0=W[i], x1=W[i+1];
+      rois.push({x:x0, y:yT, w:Math.max(1,x1-x0), h:yB-yT, row:r, col:i});
+    }
   }
-  draw(); analyzeBtn.disabled=false; setStatus('Aligned to numbers (12 equal columns). Tap “Colorize + Compare”.');
+  // Final guarantee: 60 rects
+  if(rois.length!==60){ rois = []; for(let r=0;r<5;r++){ const W=boundsByRow[r]; if(!W) continue; const yB=rowBottoms[r]; const h=Math.max(12,Math.round((gaps[r]||avgGap)*rowFrac())); const yT=Math.max(0,yB-h); for(let i=0;i<12;i++){ const x0=W[i],x1=W[i+1]; rois.push({x:x0,y:yT,w:Math.max(1,x1-x0),h:yB-yT,row:r,col:i}); } } }
+  draw(); analyzeBtn.disabled=false; setStatus('Aligned to numbers (12 equal slots per row). Tap “Colorize + Compare”.');
 }
 
-/* ---------- Row detection: blue bars (row bottoms) ---------- */
-async function findBlueStrips(imgEl, edge, sens){
-  const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
-  const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
+/* ===== Vision: detect blue strips (row bottoms) ===== */
+async function detectBlueStrips(imgEl, edge, sens){
+  const W=imgEl.naturalWidth, H=imgEl.naturalHeight;
   const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
   g.drawImage(imgEl,0,0,W,H); const {data}=g.getImageData(0,0,W,H);
-  const x0=Math.round(W*edge), x1=Math.round(W*(1-edge));
-  const hueMin=190,hueMax=265;
 
+  const x0=Math.round(W*edge), x1=Math.round(W*(1-edge));
   const score=new Float32Array(H);
   for(let y=0;y<H;y++){
     let b=0,cnt=0;
     for(let x=x0;x<=x1;x+=2){
-      const i=(y*W+x)*4, r0=data[i],g0=data[i+1],b0=data[i+2];
-      const {h,s,v}=rgb2hsv(r0,g0,b0);
-      if(h>hueMin&&h<hueMax&&s>(0.18+0.5*sens)&&v>(0.22+0.3*sens)) b++;
+      const i=(y*W+x)*4, rr=data[i],gg=data[i+1],bb=data[i+2];
+      const {h,s,v}=rgb2hsv(rr,gg,bb);
+      if(h>190&&h<265&&s>(0.18+0.40*sens)&&v>(0.22+0.30*sens)) b++;
       cnt++;
     }
     score[y]=cnt?b/cnt:0;
   }
-  const s2=smooth(score,6);
-  const peaks=pickSpread(peaksAbove(s2,0.35),5,Math.round(H/7));
-  const rows = peaks.slice(0,5).sort((a,b)=>a-b).map(p=>Math.round(p/r));
-  return rows;
+  const s2=smooth(score,8);
+  const peaks = pickSpread(peaksAbove(s2,0.35),5,Math.round(H/7)).slice(0,5).sort((a,b)=>a-b);
+  return peaks;
 }
 
-/* ---------- Blue band bounds per row ---------- */
-async function blueBandBounds(imgEl, yBottom, edge, sens){
-  const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
-  const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
+/* ===== Vision: find [xL,xR] (largest continuous blue) inside the numbers band ===== */
+async function bandInterior(imgEl, yBottom, edge, sens){
+  const W=imgEl.naturalWidth, H=imgEl.naturalHeight;
   const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
   g.drawImage(imgEl,0,0,W,H); const {data}=g.getImageData(0,0,W,H);
 
   const L=Math.round(W*edge), R=Math.round(W*(1-edge));
-  const bandH=Math.max(8,Math.round(H*0.018));
-  const y0=Math.min(H-2, Math.round(yBottom*r)+2), y1=Math.min(H-1, y0+bandH);
-  const hueMin=190,hueMax=265, sMin=0.18+0.3*sens, vMin=0.22+0.2*sens;
+  const bandH=Math.max(8,Math.round(H*0.02));
+  const y0=Math.min(H-2, yBottom+2), y1=Math.min(H-1, y0+bandH);
 
   const blue=new Float32Array(W).fill(0);
   for(let x=L;x<=R;x++){
-    let cnt=0, b=0;
+    let cnt=0,b=0;
     for(let y=y0;y<=y1;y++){
       const i=(y*W+x)*4, rr=data[i],gg=data[i+1],bb=data[i+2];
       const {h,s,v}=rgb2hsv(rr,gg,bb);
-      if(h>hueMin&&h<hueMax&&s>sMin&&v>vMin) b++;
+      if(h>190&&h<265&&s>(0.18+0.30*sens)&&v>(0.22+0.20*sens)) b++;
       cnt++;
     }
     blue[x]=cnt?b/cnt:0;
   }
   const sb=smooth(blue,4);
-  const thr = 0.35*Math.max(...sb);
-  let xL=L, xR=R;
-  for(let x=L;x<=R;x++){ if(sb[x]>thr){ xL=x; break; } }
-  for(let x=R;x>=L;x--){ if(sb[x]>thr){ xR=x; break; } }
-  // pad inwards a touch to skip frame bleed
-  const pad=Math.round((xR-xL)*0.01);
-  xL+=pad; xR-=pad;
-  // fallbacks
-  if(xR-xL<50){ xL=L; xR=R; }
-  const scaleX=imgEl.naturalWidth/W;
-  return {xL:Math.round(xL*scaleX), xR:Math.round(xR*scaleX)};
+  // Find longest contiguous region above threshold
+  const thr = 0.33*Math.max(...sb);
+  let bestLen=0,bxL=L,bxR=R, curL=null;
+  for(let x=L;x<=R;x++){
+    if(sb[x]>thr){ if(curL===null) curL=x; }
+    else if(curL!==null){ const len=x-1-curL; if(len>bestLen){bestLen=len; bxL=curL; bxR=x-1;} curL=null; }
+  }
+  if(curL!==null){ const len=R-curL; if(len>bestLen){bestLen=len; bxL=curL; bxR=R;} }
+  // small inward pad to avoid frame bleed
+  const pad=Math.round((bxR-bxL)*0.01); bxL+=pad; bxR-=pad;
+  if(bxR-bxL<60){ bxL=L; bxR=R; } // fallback
+  return {xL:bxL, xR:bxR};
 }
 
-/* ---------- Split 12 + refine to white ticks ---------- */
-function split12WithRefine(imgEl, yBottom, xL, xR){
+/* ===== Build 13 walls by equal split + small tick nudge ===== */
+function forceEqualWalls(xL,xR){
+  const per=(xR-xL)/12; const walls=[...Array(13)].map((_,k)=>Math.round(xL+k*per)); return walls;
+}
+function wallsEqualSplitWithTickNudge(imgEl, yBottom, xL, xR){
+  const base = forceEqualWalls(xL,xR);
+  // try nudging start within ±20% of period to land on white tick lines inside the blue band
   const per=(xR-xL)/12;
-  const startCandidates=[];
-  const delta=per*0.25; // ±25% period
-  for(let s=xL-delta; s<=xL+delta; s+=Math.max(1, per/40)){
-    startCandidates.push(s);
-  }
-  const bestStart = scoreStartOnWhite(imgEl, yBottom, startCandidates, per);
-  if(bestStart==null) return [];
+  const bestStart = scoreTickStarts(imgEl, yBottom, xL, per);
+  if(bestStart==null) return base;
   const walls=[...Array(13)].map((_,k)=>Math.round(bestStart+k*per));
+  // strict check
+  if(walls.length!==13 || walls[0]>=walls[12]) return base;
+  for(let i=1;i<walls.length;i++){ if(walls[i]<=walls[i-1]) return base; }
   return walls;
 }
-function scoreStartOnWhite(imgEl, yBottom, starts, per){
-  const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
-  const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
+function scoreTickStarts(imgEl, yBottom, xL, per){
+  const W=imgEl.naturalWidth,H=imgEl.naturalHeight;
   const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
-  g.drawImage(imgEl,0,0,W,H); const im=g.getImageData(0,0,W,H), data=im.data;
-  const band= Math.max(8,Math.round(H*0.018));
-  const y0=Math.min(H-2, Math.round(yBottom*r)+2), y1=Math.min(H-1, y0+band);
-
+  g.drawImage(imgEl,0,0,W,H); const {data}=g.getImageData(0,0,W,H);
+  const band=Math.max(8,Math.round(H*0.02));
+  const y0=Math.min(H-2,yBottom+2), y1=Math.min(H-1,y0+band);
+  const delta=per*0.20;
   let best=null, bestScore=-1;
-  for(const s0 of starts){
-    const s = s0*r; const p = per*r;
+  for(let s=xL-delta; s<=xL+delta; s+=Math.max(1, per/40)){
     let sum=0;
     for(let k=0;k<=12;k++){
-      const x=Math.round(s+k*p); if(x<0||x>=W) continue;
-      // whiteness at this column within the blue band
-      let sc=0, cnt=0;
+      const x=Math.round(s+k*per); if(x<0||x>=W) continue;
+      // whiteness (low S, high V) at this column within the blue band
+      let sc=0,cnt=0;
       for(let y=y0;y<=y1;y++){
         const i=(y*W+x)*4, rr=data[i],gg=data[i+1],bb=data[i+2];
         const {s:sat,v}=rgb2hsv(rr,gg,bb);
-        if(v>0.72 && sat<0.35) sc++; // light / white
+        if(v>0.72 && sat<0.35) sc++;
         cnt++;
       }
       sum += cnt?sc/cnt:0;
     }
-    if(sum>bestScore){ bestScore=sum; best=s0; }
+    if(sum>bestScore){ bestScore=sum; best=s; }
   }
   return best;
 }
 
-/* ---------- Occupancy ---------- */
+/* ===== Occupancy (simple, robust) ===== */
 function cropROI(r){ const c=document.createElement('canvas'); c.width=r.w; c.height=r.h; c.getContext('2d').drawImage(current.image,r.x,r.y,r.w,r.h,0,0,r.w,r.h); return c; }
 function slotOccupied(c){
   const k=c.getContext('2d');
@@ -402,19 +394,20 @@ function slotOccupied(c){
   return best>=Math.round(cw*0.22);
 }
 
-/* ---------- Drawing ---------- */
+/* ===== Draw ===== */
 function draw(){
   ctx.clearRect(0,0,overlay.width,overlay.height); if(!current) return;
   const sx=overlay.width/current.W, sy=overlay.height/current.H, a=guideAlpha();
 
   if(showGuidesEl.checked){
-    // Cyan lines at blue-strip tops (row bottoms)
+    // row bottoms
     ctx.strokeStyle=`rgba(50,208,255,${a})`; ctx.lineWidth=2;
     for(const y of rowBottoms){ ctx.beginPath(); ctx.moveTo(0,y*sy); ctx.lineTo(overlay.width,y*sy); ctx.stroke(); }
-    // White vertical walls
+    // vertical walls
     ctx.strokeStyle=`rgba(255,255,255,${a})`; ctx.lineWidth=1.6;
-    for(const w of boundsByRow){ (w||[]).forEach(x=>{ const xx=x*sx; ctx.beginPath(); ctx.moveTo(xx,0); ctx.lineTo(xx,overlay.height); ctx.stroke(); }); }
+    for(const walls of boundsByRow){ (walls||[]).forEach(x=>{ const xx=x*sx; ctx.beginPath(); ctx.moveTo(xx,0); ctx.lineTo(xx,overlay.height); ctx.stroke(); }); }
   }
+  // slot rects
   if(rois.length){ ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth=2; for(const r of rois){ ctx.strokeRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy); } }
 }
 function paintOverlay(){
@@ -431,7 +424,7 @@ function paintOverlay(){
   }
 }
 
-/* ---------- Utilities ---------- */
+/* ===== Helpers ===== */
 function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0)h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
 function smooth(a,w){const o=new Float32Array(a.length); for(let i=0;i<a.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=a.length) continue; s+=a[j]; c++;} o[i]=s/c;} return o;}
 function peaksAbove(series, frac){ const m=Math.max(...series); const out=[]; if(!m) return out; for(let y=1;y<series.length-1;y++){ if(series[y]>=frac*m && series[y]>=series[y-1] && series[y]>=series[y+1]) out.push(y);} return out; }
@@ -439,12 +432,7 @@ function pickSpread(peaks, need, minDist){ const out=[]; for(const p of peaks){ 
 function screenToImage(cx,cy){ const r=overlay.getBoundingClientRect(); const x=(cx-r.left)/r.width*current.W; const y=(cy-r.top)/r.height*current.H; return {ix:x, iy:y}; }
 function drawTapLine(yImg){ const sy=overlay.height/current.H, y=yImg*sy; ctx.save(); ctx.strokeStyle='rgba(50,208,255,.9)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(overlay.width,y); ctx.stroke(); ctx.restore(); }
 
-/* ---------- Stage taps to set rows ---------- */
-stage.addEventListener('pointerdown', e=>{
-  if(!quickTap||!current) return;
-});
-
-/* ---------- Boot ---------- */
+/* ===== Boot ===== */
 (function initGrid(){ boxGrid.innerHTML=''; for(let r=0;r<5;r++){ for(let c=0;c<12;c++){ const d=document.createElement('div'); d.className='slot'; const s=document.createElement('span'); s.textContent=`#${r*12+c+1}`; d.appendChild(s); boxGrid.appendChild(d);} }})();
 </script>
 </body>
