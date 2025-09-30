@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Phone Box Attendance — Blue Pads (1–60)</title>
+<title>Phone Box Attendance — Simple Grid (1–60)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
@@ -55,7 +55,7 @@
 <body>
 <header>
   <div style="font-weight:800">📱 Phone Box Attendance</div>
-  <div class="badge">Blue pads (1–60) • Client-only</div>
+  <div class="badge">Simple grid • 12×5 above blue bars</div>
 </header>
 <main>
   <div class="wrap">
@@ -88,10 +88,10 @@
         <div>
           <label>Calibration</label>
           <div style="display:flex; gap:8px; flex-wrap:wrap">
-            <button id="autoBlueBtn" class="primary">Auto-calibrate (5 bars × 12 pads)</button>
-            <button id="calibrateBtn">Manual 12×5 grid (fallback)</button>
+            <button id="autoBtn" class="primary">Auto-calibrate (5 blue bars)</button>
+            <button id="forceGridBtn">Show simple grid now</button>
           </div>
-          <small>Rectangles sit directly **above** the blue number bars, one per slot (1–60).</small>
+          <small>Rectangles sit directly <b>above</b> the blue number bars. 12 columns are spread evenly across the width.</small>
         </div>
       </div>
 
@@ -129,20 +129,8 @@
             <label>Ignore X edges (% of width)
               <input id="edgeCropPct" type="range" min="0" max="12" step="1" value="5">
             </label>
-            <label>Label band height (% of image height)
-              <input id="labelPct" type="range" min="1" max="6" step="1" value="3">
-            </label>
             <label>Phone band height (% of row height)
               <input id="phonePct" type="range" min="30" max="100" step="5" value="70">
-            </label>
-            <label>Phone band side inset (% of column width)
-              <input id="insetPct" type="range" min="0" max="25" step="1" value="12">
-            </label>
-            <label>Extra inset for edge columns (% of column width)
-              <input id="edgeInsetPct" type="range" min="0" max="35" step="1" value="20">
-            </label>
-            <label>Min pad width (% of image width)
-              <input id="minRunPct" type="range" min="0" max="5" step="0.2" value="1.6">
             </label>
             <div style="font-size:12px;color:var(--muted)">Blue bars y: <span id="blueList">—</span></div>
           </div>
@@ -163,24 +151,22 @@
 </main>
 
 <script>
-/* ---------- Setup / UI ---------- */
+/* ---------- UI ---------- */
 const BOX_IDS=[]; ['9','10','11','12'].forEach(g=>['A','B','C','D','E','F'].forEach(l=>BOX_IDS.push(`${g}${l}`)));
 const gradeBoxes=document.getElementById('gradeBoxes'); BOX_IDS.forEach(id=>{const o=document.createElement('option');o.textContent=o.value=id;gradeBoxes.appendChild(o);});
+
 const photoInput=document.getElementById('photo'), preview=document.getElementById('preview'), overlay=document.getElementById('overlay');
 const statusEl=document.getElementById('status'), resultsBody=document.getElementById('resultsBody');
 const rosterChoice=document.getElementById('rosterChoice'), rosterUpload=document.getElementById('rosterUpload');
-const boxGrid=document.getElementById('boxGrid'), toggleOverlay=document.getElementById('toggleOverlay');
-const toggleGuides=document.getElementById('toggleGuides');
+const boxGrid=document.getElementById('boxGrid'), toggleOverlay=document.getElementById('toggleOverlay'), toggleGuides=document.getElementById('toggleGuides');
+
 const blueHueMinEl=document.getElementById('blueHueMin'), blueHueMaxEl=document.getElementById('blueHueMax');
 const blueSatEl=document.getElementById('blueSat'), blueValEl=document.getElementById('blueVal');
-const edgeCropPctEl=document.getElementById('edgeCropPct');
-const labelPctEl=document.getElementById('labelPct'), phonePctEl=document.getElementById('phonePct'), insetPctEl=document.getElementById('insetPct');
-const edgeInsetPctEl=document.getElementById('edgeInsetPct');
-const minRunPctEl=document.getElementById('minRunPct');
+const edgeCropPctEl=document.getElementById('edgeCropPct'), phonePctEl=document.getElementById('phonePct');
 const blueListEl=document.getElementById('blueList');
 
 let roster=[], boxConfig={}, mobilenetModel=null, currentImage=null, lastRecords=null;
-let calibDebug=null;
+let debugMeta=null; // { yBars, xBounds }
 
 /* ---------- Roster ---------- */
 async function loadRoster(){
@@ -222,7 +208,10 @@ photoInput.addEventListener('change',()=>{
   img.onload=()=>{
     const scaled = toMaxSize(img, 1600);
     preview.innerHTML=''; preview.appendChild(scaled); preview.appendChild(overlay);
-    currentImage=scaled; resizeOverlay(); setTimeout(autoDetectBox, 300);
+    currentImage=scaled; resizeOverlay();
+    // show a simple grid immediately
+    forceSimpleGrid();
+    setTimeout(autoDetectBox, 200);
   };
   img.src=url;
 });
@@ -252,10 +241,13 @@ function drawOverlay(){
   const cfg=boxConfig[document.getElementById('boxSelect').value||'AUTO']; if(!cfg) return;
   const scaleX=overlay.width/currentImage.naturalWidth, scaleY=overlay.height/currentImage.naturalHeight;
 
-  if(toggleGuides.checked && calibDebug){
-    ctx.strokeStyle='#3aa0ff'; ctx.lineWidth=2; (calibDebug.yBars||[]).forEach(y=>{ const yy=y*scaleY; ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(overlay.width,yy); ctx.stroke(); });
-    ctx.strokeStyle='#ffd63a'; ctx.lineWidth=1.5; (calibDebug.xBounds||[]).forEach(x=>{ const xx=x*scaleX; ctx.beginPath(); ctx.moveTo(xx,0); ctx.lineTo(xx,overlay.height); ctx.stroke(); });
-    ctx.fillStyle='#66ccff'; (calibDebug.centersGlobal||[]).forEach(x=>{ const xx=x*scaleX; ctx.beginPath(); ctx.arc(xx, overlay.height-10, 3, 0, Math.PI*2); ctx.fill(); });
+  if(toggleGuides.checked && debugMeta && debugMeta.yBars){
+    ctx.strokeStyle='#3aa0ff'; ctx.lineWidth=2;
+    debugMeta.yBars.forEach(y=>{ const yy=y*scaleY; ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(overlay.width,yy); ctx.stroke(); });
+    if(debugMeta.xBounds){
+      ctx.strokeStyle='#ffd63a'; ctx.lineWidth=1.5;
+      debugMeta.xBounds.forEach(x=>{ const xx=x*scaleX; ctx.beginPath(); ctx.moveTo(xx,0); ctx.lineTo(xx,overlay.height); ctx.stroke(); });
+    }
   }
 
   if(toggleOverlay.checked && cfg.roisDetect){
@@ -265,140 +257,91 @@ function drawOverlay(){
       const y=roi.y*currentImage.naturalHeight*scaleY;
       const w=roi.w*currentImage.naturalWidth*scaleX;
       const h=roi.h*currentImage.naturalHeight*scaleY;
-      const status = lastRecords ? lastRecords[i].status : null;
-      ctx.strokeStyle = status==='ok' ? '#3ad27a' : status==='missing' ? '#ff6e6e' : 'rgba(255,255,255,.9)';
+      const status = lastRecords ? lastRecords[i]?.status : null;
+      ctx.strokeStyle = status==='ok' ? '#3ad27a' : status==='missing' ? '#ff6e6e' : 'rgba(255,255,255,.95)';
       ctx.strokeRect(x,y,w,h);
     });
   }
 }
 
-/* ---------- Calibration (blue bars + robust 12 columns) ---------- */
-document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
+/* ---------- Calibration (simple & reliable) ---------- */
+document.getElementById('autoBtn').addEventListener('click', autoCalibrateSimple);
+document.getElementById('forceGridBtn').addEventListener('click', forceSimpleGrid);
+
+function forceSimpleGrid(){
   if(!currentImage) return alert('Take or upload a photo first.');
   const box=document.getElementById('boxSelect').value||'AUTO';
-  statusEl.textContent='Auto-calibrating…';
+  const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
+  // rows: 5 evenly spaced blue bars near the lower portions (fallback)
+  const yBars = [0.20,0.38,0.56,0.74,0.92].map(p=>Math.round(p*H));
+  const rois = buildROIsFromBarsAndEqualColumns(W,H,yBars);
+  boxConfig[box]={roisDetect:rois};
+  debugMeta={yBars, xBounds: equalBounds(W, edgeCropPct())};
+  statusEl.textContent='Simple grid shown (fallback).';
+  drawOverlay();
+}
+
+async function autoCalibrateSimple(){
+  if(!currentImage) return alert('Take or upload a photo first.');
+  const box=document.getElementById('boxSelect').value||'AUTO';
 
   const hueMin=parseInt(blueHueMinEl.value||'190',10);
   const hueMax=parseInt(blueHueMaxEl.value||'255',10);
   const sMin=parseFloat(blueSatEl.value||'0.35');
   const vMin=parseFloat(blueValEl.value||'0.25');
-  const edgeCrop = (parseInt(edgeCropPctEl.value||'5',10))/100;
-  const labelPct = (parseInt(labelPctEl.value||'3',10))/100;
-  const phonePct = (parseInt(phonePctEl.value||'70',10))/100;
-  const insetPct = (parseInt(insetPctEl.value||'12',10))/100;
-  const edgeInset = (parseInt(edgeInsetPctEl.value||'20',10))/100;
-  const minRunPct = (parseFloat(minRunPctEl.value||'1.6'))/100;
 
   const small = downscale(currentImage, 1200);
-  const ctx = small.getContext('2d');
-  const {data,width:W,height:H} = ctx.getImageData(0,0,small.width,small.height);
-
-  const yBars = await findFiveBlueLines(small, {hueMin,hueMax,sMin,vMin,edgeCrop});
-  if(yBars.length!==5){ alert('Could not find 5 blue bars. Tweak the sliders or retake straighter.'); return; }
+  const yBars = await findFiveBlueLines(small, {hueMin,hueMax,sMin,vMin,edgeCrop:edgeCropPct()});
+  if(yBars.length!==5){
+    forceSimpleGrid();
+    alert('Could not reliably find 5 blue bars — showing simple grid instead.');
+    return;
+  }
   blueListEl.textContent = yBars.map(y=>y.toFixed(0)).join(', ');
+  const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
 
+  const rois = buildROIsFromBarsAndEqualColumns(W,H,yBars);
+  boxConfig[box]={roisDetect:rois};
+  debugMeta={yBars, xBounds: equalBounds(W, edgeCropPct())};
+  statusEl.textContent='Calibrated to blue bars. Rectangles are above the numbers.';
+  drawOverlay();
+}
+
+function buildROIsFromBarsAndEqualColumns(W,H,yBars){
+  // 12 equal columns, ignoring left/right edges a bit
+  const bounds = equalBounds(W, edgeCropPct());
+  const cols = boundsToCols(bounds);
+  // detection band height as % of row gap
   const gaps=[]; for(let i=1;i<yBars.length;i++) gaps.push(yBars[i]-yBars[i-1]);
-  const rowH = median(gaps);
-
-  // ---- per-row pads with validation ----
-  const xRunsByRow=[];
-  const bandHalf = Math.max(3, Math.round((labelPct*H)/2));
-  const xLeft=Math.round(W*edgeCrop), xRight=Math.round(W*(1-edgeCrop));
+  const rowH = gaps.length ? gaps.reduce((a,b)=>a+b,0)/gaps.length : H/5;
+  const detectH = Math.max(10, Math.round(rowH * (parseInt(phonePctEl.value||'70',10)/100)));
+  const rois=[];
   for(const y of yBars){
-    let runs = find12PadsRobust({data,W,H}, y, bandHalf, {hueMin,hueMax,sMin,vMin,edgeCrop,minRunPct});
-    if(runs.length!==12 || !validateRunCoverage(runs, xLeft, xRight)){
-      runs = equalBins12(W, edgeCrop); // guaranteed 12 across full width
-    }
-    xRunsByRow.push(runs);
-  }
-
-  // global centers from median of rows
-  const centersGlobal=[]; for(let k=0;k<12;k++){ const vals=xRunsByRow.map(r=>r[k].center).sort((a,b)=>a-b); centersGlobal.push(vals[Math.floor(vals.length/2)]); }
-
-  // bounds (13) from midpoints
-  const xBounds=[]; const deltas=[]; for(let k=0;k<11;k++) deltas.push(centersGlobal[k+1]-centersGlobal[k]);
-  const leftEdge  = centersGlobal[0]  - deltas[0]/2;
-  const rightEdge = centersGlobal[11] + deltas[10]/2;
-  xBounds.push(Math.max(0, Math.round(leftEdge)));
-  for(let k=0;k<11;k++) xBounds.push(Math.round((centersGlobal[k]+centersGlobal[k+1])/2));
-  xBounds.push(Math.min(W-1, Math.round(rightEdge)));
-
-  // detection ROIs ABOVE the numbers; bottom = blue bar
-  const roisDetect=[];
-  const detectH = Math.max(10, Math.round(phonePct*rowH));
-  for(let r=0;r<5;r++){
-    const yBottom = Math.max(0, Math.round(yBars[r]) - 1);
-    const yDet1 = yBottom, yDet0 = Math.max(0, yDet1 - detectH);
-    for(let c=0;c<12;c++){
-      let x0=xBounds[c], x1=xBounds[c+1];
-      const baseInset = Math.round((x1-x0)*insetPct);
-      const extraInset = (c===0||c===11)? Math.round((x1-x0)*edgeInset) : 0;
-      x0 += Math.max(baseInset, extraInset);
-      x1 -= Math.max(baseInset, extraInset);
-      if(x1<=x0){ const mid=Math.round((xBounds[c]+xBounds[c+1])/2); x0=mid-1; x1=mid+1; }
-      roisDetect.push({x:x0/W, y:yDet0/H, w:(x1-x0)/W, h:(yDet1-yDet0)/H});
+    const yBottom = Math.max(0,y-1), yTop = Math.max(0, yBottom - detectH);
+    for(const [x0,x1] of cols){
+      // inset 12% inside each column, extra at edges
+      const base=Math.round((x1-x0)*0.12);
+      const extraL = (x0===cols[0][0]) ? Math.round((x1-x0)*0.20) : 0;
+      const extraR = (x1===cols[cols.length-1][1]) ? Math.round((x1-x0)*0.20) : 0;
+      const xa = x0 + Math.max(base,extraL), xb = x1 - Math.max(base,extraR);
+      rois.push({x:xa/W, y:yTop/H, w:(xb-xa)/W, h:(yBottom-yTop)/H});
     }
   }
+  return rois;
+}
+function equalBounds(W, edge){ const L=Math.round(W*edge), R=Math.round(W*(1-edge)); const w=R-L+1, step=w/12; const b=[L]; for(let i=1;i<12;i++) b.push(Math.round(L+i*step)); b.push(R); return b; }
+function boundsToCols(b){ const out=[]; for(let i=0;i<12;i++) out.push([b[i], b[i+1]]); return out; }
+function edgeCropPct(){ return (parseInt(edgeCropPctEl.value||'5',10))/100; }
 
-  boxConfig[box] = { roisDetect };
-  localStorage.setItem('phonebox_config', JSON.stringify(boxConfig));
-  calibDebug = { yBars, centersGlobal, xBounds };
-  statusEl.textContent='Calibrated. Rectangles are above the blue bars, 12 per row.';
-  drawOverlay();
-});
-
-// Manual grid fallback
-document.getElementById('calibrateBtn').addEventListener('click',()=>{
-  const box=document.getElementById('boxSelect').value||'AUTO';
-  if(!currentImage) return alert('Take or upload a photo first.');
-  const roisDetect=[]; const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
-  const padX=0.08*W, padY=0.10*H; const gridW=W-2*padX, gridH=H-2*padY;
-  const cellW=gridW/12, cellH=gridH/5;
-  for(let r=0;r<5;r++) for(let c=0;c<12;c++){
-    const x=(padX+c*cellW)/W, y=(padY+r*cellH)/H, w=cellW/W, h=(0.8*cellH)/H;
-    const inset = 0.10*w;
-    roisDetect.push({x:x+inset, y, w:w-2*inset, h});
-  }
-  boxConfig[box]={roisDetect}; localStorage.setItem('phonebox_config',JSON.stringify(boxConfig));
-  calibDebug=null;
-  alert('Manual grid saved.');
-  drawOverlay();
-});
-
-/* ---------- Helpers ---------- */
+/* ---------- Blue bar finder ---------- */
 function downscale(img, maxW=900){ const r=Math.min(1,maxW/img.naturalWidth); const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r); c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c; }
 function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
 function smooth1D(arr, w=5){ const out=new Float32Array(arr.length); for(let i=0;i<arr.length;i++){ let s=0,c=0; for(let k=-w;k<=w;k++){ const j=i+k; if(j<0||j>=arr.length) continue; s+=arr[j]; c++; } out[i]=s/c; } return out; }
 function pickPeaks(series, count, minDist){ const idx=[...series].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const sel=[]; for(const [,i] of idx){ if(sel.every(j=>Math.abs(j-i)>minDist)) sel.push(i); if(sel.length>=count) break; } return sel.sort((a,b)=>a-b); }
-function median(a){ const b=[...a].sort((x,y)=>x-y); const m=Math.floor(b.length/2); return b.length%2?b[m]:(b[m-1]+b[m])/2; }
-function quantile(a,q){ const b=[...a].sort((x,y)=>x-y); const i=Math.max(0,Math.min(b.length-1, Math.floor(q*(b.length-1)))); return b[i]; }
 
-// runs → validate span & spacing
-function validateRunCoverage(runs, xLeft, xRight){
-  const span = runs[runs.length-1].end - runs[0].start;
-  const total = xRight - xLeft;
-  if(span < 0.85*total) return false;          // must cover most of the row
-  const gaps = []; for(let i=0;i<runs.length-1;i++) gaps.push(runs[i+1].center - runs[i].center);
-  const mean = gaps.reduce((a,b)=>a+b,0)/gaps.length;
-  const minGap=Math.min(...gaps), maxGap=Math.max(...gaps);
-  if(minGap < 0.40*mean || maxGap > 1.8*mean) return false; // spacing sanity
-  return true;
-}
-
-// guaranteed 12 bins across width (used as fallback)
-function equalBins12(W, edgeCrop){
-  const xLeft = Math.round(W*edgeCrop), xRight = Math.round(W*(1-edgeCrop));
-  const width = xRight - xLeft + 1; const bin = Math.floor(width/12);
-  const runs=[]; for(let k=0;k<12;k++){ const s=xLeft+k*bin; const e=(k===11?xRight:xLeft+(k+1)*bin-1); const c=Math.round((s+e)/2); runs.push({start:s,end:e,center:c}); }
-  return runs;
-}
-
-// find 5 blue number bars
 async function findFiveBlueLines(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}){
-  const ctx=canvas.getContext('2d');
-  const {data,width:W,height:H} = ctx.getImageData(0,0,canvas.width,canvas.height);
-  const score=new Float32Array(H);
-  const x0=Math.round(W*edgeCrop), x1=Math.round(W*(1-edgeCrop));
+  const ctx=canvas.getContext('2d'); const {data,width:W,height:H}=ctx.getImageData(0,0,canvas.width,canvas.height);
+  const score=new Float32Array(H); const x0=Math.round(W*edgeCrop), x1=Math.round(W*(1-edgeCrop));
   for(let y=0; y<H; y++){
     let sc=0; for(let x=x0; x<x1; x+=2){ const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2]; const {h,s,v}=rgb2hsv(r,g,b); const isBlue=(h>hueMin && h<hueMax)&&s>=sMin&&v>=vMin; if(isBlue) sc++; }
     score[y]=sc;
@@ -406,8 +349,9 @@ async function findFiveBlueLines(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}){
   let smooth = smooth1D(score, 6);
   let peaks  = pickPeaks(smooth, 5, Math.round(H/8));
   if(peaks.length<5){
+    // relax once
     for(let y=0; y<H; y++){
-      let sc=0; for(let x=x0; x<x1; x+=1){ const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2]; const {h,s,v}=rgb2hsv(r,g,b); const isBlue=(h>hueMin-5 && h<hueMax+5)&&s>=Math.max(0.2,sMin-0.1)&&v>=Math.max(0.18,vMin-0.07); if(isBlue) sc++; }
+      let sc=0; for(let x=x0; x<x1; x+=1){ const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2]; const {h,s,v}=rgb2hsv(r,g,b); const ok=(h>hueMin-5&&h<hueMax+5)&&s>=Math.max(0.2,sMin-0.1)&&v>=Math.max(0.18,vMin-0.07); if(ok) sc++; }
       score[y]=sc;
     }
     smooth = smooth1D(score, 8);
@@ -416,47 +360,12 @@ async function findFiveBlueLines(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}){
   return peaks;
 }
 
-// 12 pads per row (segmentation + valley split). May return bad coverage → validated above.
-function find12PadsRobust(img, yCenter, bandHalf, params){
-  const {data,W,H} = img; const {hueMin,hueMax,sMin,vMin,edgeCrop,minRunPct} = params;
-  const y0=Math.max(0, yCenter-bandHalf), y1=Math.min(H-1, yCenter+bandHalf);
-  const xLeft=Math.round(W*edgeCrop), xRight=Math.round(W*(1-edgeCrop));
-  const col=new Float32Array(W).fill(0);
-  for(let x=xLeft; x<=xRight; x++){
-    let sc=0; for(let y=y0; y<=y1; y++){ const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2]; const {h,s,v}=rgb2hsv(r,g,b); if((h>hueMin && h<hueMax)&&s>=sMin&&v>=vMin) sc++; }
-    col[x]=sc;
-  }
-  const colS = smooth1D(col, 6);
-  const minW = Math.max(1, Math.round(minRunPct*W));
-  const gapT = Math.max(1, Math.round(0.01*W));
-  let thrCandidates=[ quantile([...colS].slice(xLeft,xRight+1), 0.65), quantile([...colS].slice(xLeft,xRight+1), 0.55), quantile([...colS].slice(xLeft,xRight+1), 0.45) ];
-  for(const thr of thrCandidates){
-    const raw=new Uint8Array(W).fill(0); for(let x=xLeft;x<=xRight;x++) raw[x] = colS[x] >= thr ? 1 : 0;
-    const mask = close1D(raw, Math.max(1, Math.round(W/400)));
-    let runs = runsFromMask(mask, xLeft, xRight);
-    runs = runs.filter(r => (r.end - r.start + 1) >= minW);
-    runs = mergeSmallGaps(runs, gapT);
-    if(runs.length>12) runs = mergeToCountByGap(runs, 12);
-    if(runs.length===12) return runs.map(r=>({start:r.start,end:r.end,center:weightedCenter(colS,r.start,r.end)})).sort((a,b)=>a.center-b.center);
-  }
-  // valley midpoints fallback (still validated later)
-  const width = xRight - xLeft + 1; const binW = width/12;
-  const centers=[]; for(let k=0;k<12;k++){ const a=Math.round(xLeft + k*binW); const b=Math.round(xLeft + (k+1)*binW - 1); let best=a, bestV=-1; for(let x=a;x<=b;x++){ if(colS[x]>bestV){ bestV=colS[x]; best=x; } } centers.push(best); }
-  const bounds=[xLeft]; for(let k=0;k<11;k++){ const L=centers[k], R=centers[k+1]; let best=Math.round((L+R)/2), bestV=1e9; for(let x=L; x<=R; x++){ const v=colS[x]; if(v<bestV){ bestV=v; best=x; } } bounds.push(best);} bounds.push(xRight);
-  const runs=[]; for(let k=0;k<12;k++){ const a=bounds[k], b=bounds[k+1]; let s=centers[k], e=centers[k]; const segMax=Math.max(...colS.slice(a,b+1)); const t=Math.max(1, segMax*0.35); while(s-1>=a && colS[s-1]>=t) s--; while(e+1<=b && colS[e+1]>=t) e++; if(e-s+1 < minW){ const need=Math.ceil((minW-(e-s+1))/2); s=Math.max(a,s-need); e=Math.min(b,e+need);} runs.push({start:s,end:e,center:weightedCenter(colS,s,e)}); }
-  return runs;
-}
-
-function weightedCenter(arr, a, b){ let s=0,w=0; for(let x=a;x<=b;x++){ s+= x*arr[x]; w+= arr[x]; } return w>0? s/w : Math.round((a+b)/2); }
-function runsFromMask(mask, L, R){ const out=[]; let inRun=false, s=L; for(let x=L; x<=R; x++){ if(mask[x] && !inRun){ inRun=true; s=x; } if((!mask[x] || x===R) && inRun){ const e = (!mask[x] && x> L) ? x-1 : x; out.push({start:s,end:e}); inRun=false; } } return out; }
-function mergeSmallGaps(runs, gapT){ if(runs.length<=1) return runs; const out=[runs[0]]; for(let i=1;i<runs.length;i++){ const prev=out[out.length-1], cur=runs[i]; const gap = cur.start - prev.end - 1; if(gap<=gapT){ prev.end = cur.end; } else out.push(cur); } return out; }
-function mergeToCountByGap(runs, target){ runs=[...runs]; while(runs.length>target){ let bestI=-1, bestGap=1e9; for(let i=0;i<runs.length-1;i++){ const gap = runs[i+1].start - runs[i].end - 1; if(gap < bestGap){ bestGap=gap; bestI=i; } } runs[bestI] = {start:runs[bestI].start, end:runs[bestI+1].end}; runs.splice(bestI+1,1); } return runs; }
-
-/* ---------- Embeddings / Occupancy ---------- */
+/* ---------- Occupancy + embeddings ---------- */
 async function ensureModel(){ if(!mobilenetModel) mobilenetModel = await mobilenet.load(); }
 function cropToCanvas(img, roi){ const c=document.createElement('canvas'); const W=img.naturalWidth, H=img.naturalHeight; c.width=Math.round(roi.w*W); c.height=Math.round(roi.h*H); c.getContext('2d').drawImage(img, roi.x*W, roi.y*H, roi.w*W, roi.h*H, 0,0,c.width,c.height); return c; }
 async function embedCanvas(canvas){ await ensureModel(); const logits=mobilenetModel.infer(canvas,true); const emb=await logits.data(); logits.dispose(); return Array.from(emb); }
 function cosSim(a,b){ let dot=0,na=0,nb=0; for(let i=0;i<a.length;i++){ dot+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } return dot/(Math.sqrt(na)*Math.sqrt(nb)+1e-8); }
+
 function slotOccupied(canvas){
   const ctx=canvas.getContext('2d');
   const cx=Math.round(canvas.width*0.20), cw=Math.round(canvas.width*0.60);
@@ -482,7 +391,7 @@ async function analyze(){
   drawGrid(namesBySlot);
 
   if(!currentImage) return alert('Please take or upload a photo.');
-  const cfg=boxConfig[boxSel||'AUTO']; if(!cfg || !cfg.roisDetect) return alert('Please Auto-calibrate first.');
+  const cfg=boxConfig[boxSel||'AUTO']; if(!cfg || !cfg.roisDetect) return alert('Press “Auto-calibrate” (or “Show grid”).');
 
   statusEl.textContent='Computing…';
   const db=loadDB(); const records=[];
@@ -529,8 +438,8 @@ async function autoDetectBox(){
     await worker.terminate();
     const m = text.toUpperCase().match(/(SM\d|\d{1,2}[A-F])\s*-?\s*\d{1,2}/);
     if(m){ document.getElementById('boxSelect').value=m[1]; drawGrid(rosterByBox(m[1])); statusEl.textContent=`Detected box: ${m[1]}`; }
-    else  { statusEl.textContent='Could not auto-detect a box; please choose from the menu.'; }
-  }catch{ statusEl.textContent='OCR error (continuing without auto-detect).'; }
+    else  { statusEl.textContent='Could not auto-detect a box; choose from the menu.'; }
+  }catch{ statusEl.textContent='OCR error (continuing).'; }
 }
 
 /* ---------- Wire up ---------- */
@@ -545,8 +454,10 @@ document.getElementById('saveEmbeddingBtn').addEventListener('click', async ()=>
   for(let i=0;i<cfg.roisDetect.length;i++){ const slot=i+1; const name=namesBySlot[slot]; if(!name) continue; const canvas=cropToCanvas(currentImage, cfg.roisDetect[i]); const emb=await embedCanvas(canvas); db[name]=emb; }
   saveDB(db); alert('Saved embeddings for the visible phones in this photo.');
 });
-document.getElementById('boxSelect').addEventListener('change', async ()=>{ roster=await loadRoster(); const id=document.getElementById('boxSelect').value; drawGrid(rosterByBox(id)); drawOverlay(); });
-document.getElementById('photo').addEventListener('change', ()=>setTimeout(autoDetectBox,400));
+document.getElementById('boxSelect').addEventListener('change', async ()=>{
+  roster=await loadRoster(); const id=document.getElementById('boxSelect').value; drawGrid(rosterByBox(id)); drawOverlay();
+});
+document.getElementById('photo').addEventListener('change', ()=>setTimeout(autoDetectBox,300));
 (function init(){ const saved=localStorage.getItem('phonebox_config'); if(saved) boxConfig=JSON.parse(saved); drawGrid(); })();
 </script>
 </body>
