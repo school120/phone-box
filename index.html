@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box — Reliable Rows + Quick Tap + Roster (12×5)</title>
+<title>Phone Box — Green/Red Overlay + Roster (12×5)</title>
 <style>
   :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0;--accent:#32d0ff}
   *{box-sizing:border-box}
@@ -17,9 +17,14 @@
   button.primary{background:linear-gradient(180deg,#3bc2f2,#1aa1d9);border:none;font-weight:800}
   small{color:var(--muted)}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  #legend{display:flex;gap:10px;align-items:center;font-size:13px;color:#9ab0ff;margin-top:6px}
+  .key{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:14px;height:14px;border-radius:3px;border:1px solid #ffffff44}
+  .sw.green{background:rgba(0,200,0,.35)}
+  .sw.red{background:rgba(255,0,0,.35)}
 
   /* Preview */
-  #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0c1333;min-height:220px;touch-action:none}
+  #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0c1333;min-height:240px;touch-action:none}
   #img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;z-index:0}
   #overlay{position:absolute;inset:0;pointer-events:none;z-index:1}
 
@@ -28,10 +33,12 @@
   .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:6px;margin:10px 0}
   .slot{background:#0f1738;border:1px solid #ffffff24;aspect-ratio:3/5;border-radius:8px;position:relative}
   .slot span{position:absolute;inset:auto 6px 6px 6px;font-size:12px;color:#9ab0ff}
+  .slot.present{outline:2px solid rgba(0,200,0,.8); background:linear-gradient(transparent, rgba(0,200,0,.18))}
+  .slot.empty{outline:2px solid rgba(255,0,0,.8); background:linear-gradient(transparent, rgba(255,0,0,.18))}
   table{width:100%;border-collapse:collapse}
   th,td{border-bottom:1px solid #ffffff1f;padding:10px 6px;text-align:left}
   tr.missing{background:#ff50501a}
-  tr.ok{opacity:.9}
+  tr.ok{opacity:.95}
   @media (max-width: 900px){
     main{grid-template-columns:1fr}
     header{font-size:18px}
@@ -40,7 +47,7 @@
 </style>
 </head>
 <body>
-<header>📱 Phone Box — Reliable Rows + Quick Tap + Roster (12×5)</header>
+<header>📱 Phone Box — Green/Red Overlay + Roster (12×5)</header>
 
 <main>
   <section class="card" id="left">
@@ -49,7 +56,14 @@
       <canvas id="overlay"></canvas>
     </div>
 
+    <div id="legend">
+      <span class="key"><span class="sw green"></span> Phone present</span>
+      <span class="key"><span class="sw red"></span> Empty</span>
+      <span class="pill" id="status"></span>
+    </div>
+
     <div class="grid" id="boxGrid"></div>
+
     <table>
       <thead><tr><th>Slot</th><th>Expected</th><th>Status</th></tr></thead>
       <tbody id="results"></tbody>
@@ -93,8 +107,19 @@
 
     <div class="row" style="margin-top:10px">
       <div>
-        <label>Side gap (slot widths)</label>
-        <input id="sideGap" type="range" min="0.8" max="1.6" step="0.05" value="1.1">
+        <label>Physical — Border (in)</label>
+        <input id="borderIn" type="number" step="0.1" value="1.5">
+      </div>
+      <div>
+        <label>Physical — Slot width (in)</label>
+        <input id="slotIn" type="number" step="0.1" value="0.5">
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label>Physical — Foam wall (in)</label>
+        <input id="foamIn" type="number" step="0.1" value="0.5">
       </div>
       <div>
         <label>Guide opacity</label>
@@ -106,26 +131,25 @@
       <button id="auto" class="primary">Auto Align</button>
       <button id="tapRows">Quick Tap Rows</button>
       <button id="resetRows">Reset Rows</button>
-      <button id="analyze" disabled>Analyze & Compare</button>
+      <button id="analyze" disabled>Colorize + Compare</button>
       <label><input id="showGuides" type="checkbox" checked> Show guides</label>
-      <span id="status" class="pill"></span>
     </div>
   </section>
 </main>
 
 <script>
-/* ===== Elements & State ===== */
+/* ========= Elements & State ========= */
 const img = document.getElementById('img');
 const stage = document.getElementById('stage');
 const overlay = document.getElementById('overlay');
 const ctx = overlay.getContext('2d');
 
+const statusEl = document.getElementById('status');
 const boxSel = document.getElementById('box');
 const rosterFile = document.getElementById('rosterFile');
 const rosterStatus = document.getElementById('rosterStatus');
 const resultsBody = document.getElementById('results');
 const boxGrid = document.getElementById('boxGrid');
-const statusEl = document.getElementById('status');
 
 const photo = document.getElementById('photo');
 const autoBtn = document.getElementById('auto');
@@ -138,27 +162,30 @@ const rowPctEl = document.getElementById('rowPct');
 const edgePctEl = document.getElementById('edgePct');
 const foamPctEl = document.getElementById('foamPct');
 const blueSensEl = document.getElementById('blueSens');
-const sideGapEl = document.getElementById('sideGap');
 const guideAlphaEl = document.getElementById('guideAlpha');
 
+const borderInEl = document.getElementById('borderIn');
+const slotInEl   = document.getElementById('slotIn');
+const foamInEl   = document.getElementById('foamIn');
+
+function setStatus(t){ statusEl.textContent=t||''; }
 function rowHeight(){ return +rowPctEl.value/100; }
 function edgeCrop(){ return +edgePctEl.value/100; }
 function foamHeight(){ return +foamPctEl.value/100; }
 function blueSens(){ return +blueSensEl.value/100; }
-function sideGapSlots(){ return +sideGapEl.value; }
 function guideAlpha(){ return +guideAlphaEl.value/100; }
-function setStatus(t){ statusEl.textContent=t||''; }
 
 let current=null;         // {image, W, H}
 let roster=[];            // [{...}]
 let rowTops=[];           // 5 y positions (top edge of blue number strip)
 let boundsByRow=[];       // per row: 13 x-positions (foam walls)
 let rois=[];              // 60 rects
+let occMask=[];           // 60 booleans
 
 let quickTapActive=false;
 let quickTapYs=[];
 
-/* ===== Boxes ===== */
+/* ========= Boxes ========= */
 (function fillBoxes(){
   const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
   grades.forEach(g=>letters.forEach(l=>ids.push(g+l)));
@@ -166,7 +193,7 @@ let quickTapYs=[];
   boxSel.innerHTML = ids.map(x=>`<option>${x}</option>`).join('');
 })();
 
-/* ===== CSV (tiny) ===== */
+/* ========= CSV (tiny) ========= */
 function parseCSV(text){
   const rows=[]; let row=[], cur='', inQ=false; const push=()=>{row.push(cur);cur='';};
   for(let i=0;i<text.length;i++){
@@ -215,13 +242,18 @@ function namesForBox(boxId){
   } return out;
 }
 function drawNamesGrid(namesBySlot={}){
-  boxGrid.innerHTML=''; for(let r=0;r<5;r++){ for(let c=0;c<12;c++){ const idx=r*12+c+1;
-    const d=document.createElement('div'); d.className='slot';
-    const s=document.createElement('span'); s.textContent=namesBySlot[idx]||`#${idx}`; d.appendChild(s); boxGrid.appendChild(d);
-  }}
+  boxGrid.innerHTML='';
+  for(let r=0;r<5;r++){
+    for(let c=0;c<12;c++){
+      const idx=r*12+c+1;
+      const d=document.createElement('div'); d.className='slot';
+      const s=document.createElement('span'); s.textContent=namesBySlot[idx]||`#${idx}`;
+      d.appendChild(s); boxGrid.appendChild(d);
+    }
+  }
 }
 
-/* ===== Photo preview ===== */
+/* ========= Photo ========= */
 photo.addEventListener('change', e=>{
   const f=e.target.files[0]; if(!f) return;
   const url=URL.createObjectURL(f); const im=new Image();
@@ -229,16 +261,31 @@ photo.addEventListener('change', e=>{
   im.onerror=()=>setStatus('Could not load image.'); im.src=url;
 });
 window.addEventListener('resize', sizeStage);
-function sizeStage(){ if(!current) return; const W=stage.clientWidth; const H=Math.max(220,Math.round(W*(current.H/current.W))); stage.style.height=H+'px'; overlay.width=W; overlay.height=H; }
+function sizeStage(){ if(!current) return; const W=stage.clientWidth; const H=Math.max(240,Math.round(W*(current.H/current.W))); stage.style.height=H+'px'; overlay.width=W; overlay.height=H; }
 
-/* ===== Buttons ===== */
+/* ========= Controls ========= */
+document.querySelectorAll('#borderIn,#slotIn,#foamIn').forEach(el=>{
+  el.addEventListener('input', ()=> {
+    // Auto-suggest start offset using physical model: side gap in "periods"
+    // period ≈ slot + foam (inches). side gap ≈ border / period
+    const border=+borderInEl.value||1.5, slot=+slotInEl.value||0.5, foam=+foamInEl.value||0.5;
+    const period = Math.max(0.1, slot+foam);
+    // We store this in a variable and apply during wall fitting
+    physSideGap = Math.max(0.5, Math.min(2.5, border/period));
+    setStatus(`Side gap (by inches): ${physSideGap.toFixed(2)} slot widths`);
+  });
+});
+
+let physSideGap = (+borderInEl.value + 0) / ((+slotInEl.value||0.5)+(+foamInEl.value||0.5)); // initial suggestion
+
+/* ========= Buttons ========= */
 autoBtn.addEventListener('click', async ()=>{
   if(!current){ alert('Upload a photo first.'); return; }
   analyzeBtn.disabled=true;
   setStatus('Detecting number strips…');
   rowTops = await findNumberRowsUltra(current.image, edgeCrop(), blueSens());
   if(rowTops.length!==5){
-    setStatus('Could not auto-detect 5 number strips. Tap “Quick Tap Rows” and tap each blue strip once.');
+    setStatus('Could not auto-detect 5 strips. Tap “Quick Tap Rows” and tap each blue strip once.');
     draw(); return;
   }
   await continueFromRowTops();
@@ -246,42 +293,46 @@ autoBtn.addEventListener('click', async ()=>{
 
 tapRowsBtn.addEventListener('click', ()=>{
   if(!current){ alert('Upload a photo first.'); return; }
-  quickTapActive=true; quickTapYs=[]; setStatus('Tap each blue number strip once (5 taps total)…');
+  quickTapActive=true; quickTapYs=[]; setStatus('Tap each blue number strip once (5 taps)…');
 });
-
 resetRowsBtn.addEventListener('click', ()=>{
-  rowTops=[]; boundsByRow=[]; rois=[]; draw(); setStatus('Rows cleared.');
+  rowTops=[]; boundsByRow=[]; rois=[]; occMask=[]; draw(); setStatus('Rows cleared.');
 });
 
 analyzeBtn.addEventListener('click', ()=>{
   if(!rois.length) return alert('Align rows first.');
-  if(!boxSel.value) return alert('Choose a Box (e.g., 9B, 10C, SM1).');
-  if(!roster || roster.length===0) return alert('Load the roster CSV.');
-  const names=namesForBox(boxSel.value); drawNamesGrid(names);
-  const rows=[];
-  for(let i=0;i<rois.length;i++){
-    const slot=i+1, expected=names[slot]||''; const occ = slotOccupied(cropROI(rois[i]));
-    const status = occ ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
-    rows.push({slot,expected,status});
-  }
+  // Occupancy: compute + colorize
+  occMask = rois.map(r => slotOccupied(cropROI(r)));
+  paintOverlay(); // green/red fills
+  // Optional roster compare
   resultsBody.innerHTML='';
-  rows.forEach(r=>{
+  const names = namesForBox(boxSel.value||'');
+  drawNamesGrid(names);
+  for(let i=0;i<rois.length;i++){
+    const slot=i+1, expected=names[slot]||'';
+    const status = occMask[i] ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
     const tr=document.createElement('tr');
-    tr.className = r.status==='missing'?'missing':(r.status==='present'?'ok':'');
-    tr.innerHTML=`<td>${r.slot}</td><td>${r.expected||''}</td><td><span class="pill">${r.status}</span></td>`;
+    tr.className = status==='missing'?'missing':(status==='present'?'ok':'');
+    tr.innerHTML=`<td>${slot}</td><td>${expected}</td><td><span class="pill">${status}</span></td>`;
     resultsBody.appendChild(tr);
+  }
+  // Also tint the mini grid
+  const cells = [...boxGrid.children];
+  cells.forEach((div,idx)=>{
+    div.classList.remove('present','empty');
+    div.classList.add( occMask[idx] ? 'present' : 'empty' );
   });
-  setStatus('Compared to roster.');
+  setStatus('Colorized: green=phone, red=empty.');
 });
 
-/* ===== Stage interactions (Quick Tap) ===== */
+/* ========= Stage interactions (Quick Tap) ========= */
 stage.addEventListener('pointerdown', async (e)=>{
   if(!quickTapActive || !current) return;
   const {iy}=screenToImage(e.clientX,e.clientY);
   quickTapYs.push(iy);
   drawTapMarker(iy);
   if(quickTapYs.length<5){
-    setStatus(`Tap noted (${quickTapYs.length}/5). Tap the next blue strip…`);
+    setStatus(`Tap noted (${quickTapYs.length}/5)…`);
   }else{
     quickTapActive=false;
     rowTops = quickTapYs.slice().sort((a,b)=>a-b);
@@ -289,25 +340,21 @@ stage.addEventListener('pointerdown', async (e)=>{
     await continueFromRowTops();
   }
 });
-
 function drawTapMarker(yImg){
-  const sy=overlay.height/current.H;
-  const y=yImg*sy;
-  ctx.save();
-  ctx.strokeStyle='rgba(50,208,255,.9)';
-  ctx.lineWidth=2;
+  const sy=overlay.height/current.H; const y=yImg*sy;
+  ctx.save(); ctx.strokeStyle='rgba(50,208,255,.9)'; ctx.lineWidth=2;
   ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(overlay.width,y); ctx.stroke();
   ctx.restore();
 }
 
-/* ===== Continue pipeline once we have rowTops ===== */
+/* ========= Pipeline after rowTops ========= */
 async function continueFromRowTops(){
-  boundsByRow=[]; rois=[];
+  boundsByRow=[]; rois=[]; occMask=[];
   const gaps=[]; for(let i=1;i<rowTops.length;i++) gaps.push(rowTops[i]-rowTops[i-1]);
   const avgGap=gaps.reduce((a,b)=>a+b,0)/gaps.length;
 
   for(const yBottom of rowTops){
-    const bounds = await wallsFromFoam(current.image, yBottom, avgGap, edgeCrop(), foamHeight(), sideGapSlots());
+    const bounds = await wallsFromFoam(current.image, yBottom, avgGap, edgeCrop(), foamHeight(), physSideGap);
     boundsByRow.push(bounds);
   }
   for(let r=0;r<5;r++){
@@ -316,10 +363,10 @@ async function continueFromRowTops(){
     const b=boundsByRow[r];
     for(let i=0;i<12;i++){ const x0=b[i], x1=b[i+1]; rois.push({x:x0,y:yTop,w:Math.max(1,(x1-x0)),h:yBottom-yTop,row:r,col:i}); }
   }
-  draw(); analyzeBtn.disabled=false; setStatus('Aligned. Tap “Analyze & Compare”.');
+  draw(); analyzeBtn.disabled=false; setStatus('Aligned. Tap “Colorize + Compare”.');
 }
 
-/* ===== Draw ===== */
+/* ========= Draw (guides) ========= */
 function draw(){
   ctx.clearRect(0,0,overlay.width,overlay.height); if(!current) return;
   const sx=overlay.width/current.W, sy=overlay.height/current.H, a=guideAlpha();
@@ -332,12 +379,27 @@ function draw(){
     ctx.strokeStyle=`rgba(255,255,255,${a})`; ctx.lineWidth=1.6;
     for(let r=0;r<boundsByRow.length;r++){ const y=rowTops[r]*sy; (boundsByRow[r]||[]).forEach(x=>{ const xx=x*sx; ctx.beginPath(); ctx.moveTo(xx,y-40); ctx.lineTo(xx,y+40); ctx.stroke(); }); }
   }
-  // slot rectangles
+  // slot frame outlines (no fill yet)
   if(rois.length){ ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth=2; for(const r of rois){ ctx.strokeRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy);} }
 }
+function paintOverlay(){
+  if(!rois.length) return;
+  const sx=overlay.width/current.W, sy=overlay.height/current.H;
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  // Fill green/red
+  for(let i=0;i<rois.length;i++){
+    const r=rois[i]; const fill = occMask[i] ? 'rgba(0,200,0,.35)' : 'rgba(255,0,0,.35)';
+    ctx.fillStyle=fill; ctx.fillRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy);
+  }
+  // Guides atop
+  if(showGuidesEl.checked){
+    ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=1.5;
+    for(const r of rois){ ctx.strokeRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy); }
+  }
+}
 
-/* ===== Vision core ===== */
-/* Ultra: rows = blue AND digits (white OR dark) with multi-pass + period repair */
+/* ========= Vision core ========= */
+/* Ultra: rows = blue AND digits (white OR dark) with multi-pass + spacing repair */
 async function findNumberRowsUltra(imgEl, edge, sens){
   const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
@@ -364,9 +426,8 @@ async function findNumberRowsUltra(imgEl, edge, sens){
         const isBlue=(h>hueMin&&h<hueMax)&&s>=P.sMin&&v>=P.vMin;
         if(isBlue){
           b++;
-          if(s<=P.whiteS && v>=P.whiteV) w++;     // white digits on blue
-          if(v<=P.darkV) d++;                      // dark digits on blue (shadow/ink)
-          // simple horizontal edge estimate (blue row has number edges)
+          if(s<=P.whiteS && v>=P.whiteV) w++;
+          if(v<=P.darkV) d++;
           if(x+2<=x1){
             const j=(y*W+(x+2))*4;
             const L1=0.299*rr+0.587*gg+0.114*bb;
@@ -383,7 +444,6 @@ async function findNumberRowsUltra(imgEl, edge, sens){
     }
     const sb=smooth(blue,7), sw=smooth(whiteOnBlue,7), sd=smooth(darkOnBlue,7), se=smooth(edgeMag,7);
 
-    // combined row score: blue * (digits OR edges)
     let maxWht=0; for(const v of sw) if(v>maxWht) maxWht=v;
     let maxDrk=0; for(const v of sd) if(v>maxDrk) maxDrk=v;
     let maxEdg=0; for(const v of se) if(v>maxEdg) maxEdg=v;
@@ -396,17 +456,7 @@ async function findNumberRowsUltra(imgEl, edge, sens){
     }
 
     let rows = pickSpread(peaksAbove(score, 0.35), 5, Math.round(H/7));
-    // repair with period if <5
-    if(rows.length<5){
-      const per = estimatePeriod(score, Math.round(H/8), Math.round(H/4));
-      if(per>0){
-        const center = Math.round(H/2);
-        const start = center - Math.round(per*2);
-        rows = Array.from({length:5},(_,i)=> clamp(start + Math.round(i*per), topCut+5, botCut-5));
-      }
-    }
     if(rows.length>=5){
-      // refine to top edge of blue band
       const refined = rows.slice(0,5).sort((a,b)=>a-b).map(p=>{
         const win=10; let M=0; for(let y=Math.max(0,p-win); y<=Math.min(H-1,p+win); y++) M=Math.max(M, sb[y]);
         const T=M*0.5; let topy=p; for(let y=p;y>=0;y--){ if(sb[y]>=T) topy=y; else break; }
@@ -430,16 +480,8 @@ function pickSpread(peaks, need, minDist){
   for(const p of peaks){ if(out.every(q=>Math.abs(q-p)>minDist)) out.push(p); if(out.length>=need) break; }
   return out.sort((a,b)=>a-b);
 }
-function estimatePeriod(arr, minLag, maxLag){
-  let bestLag=0, best=-1;
-  for(let lag=minLag; lag<=maxLag; lag++){
-    let s=0; for(let i=0;i+lag<arr.length;i++) s+=arr[i]*arr[i+lag];
-    if(s>best){ best=s; bestLag=lag; }
-  }
-  return bestLag;
-}
 
-/* Foam walls with period + side-gap (same as before) */
+/* Foam walls with period + physical side gap */
 async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
   const maxW=1600, r=Math.min(1,maxW/imgEl.naturalWidth);
   const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
@@ -458,12 +500,15 @@ async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
   for(let x=L+1;x<=R-1;x++){ grad[x]=Math.abs(bright[x+1]-bright[x-1]); }
   const signal=smooth(grad,8);
 
-  const width=R-L, guess=width/13;
+  const width=R-L;
+  const guess=width/13;
   const period = findPeriod(signal, L, R, Math.round(guess*0.8), Math.round(guess*1.3));
+
+  // Start offset using physical side gap (in slot widths)
   const start0 = L + sideGapW*period;
 
   let bestS=start0, bestScore=-1;
-  const search=Math.round(period*0.4);
+  const search=Math.round(period*0.45);
   for(let s=Math.max(L,start0-search); s<=Math.min(R,start0+search); s++){
     let sc=0;
     for(let k=0;k<13;k++){
@@ -483,7 +528,7 @@ async function wallsFromFoam(imgEl, yBottom, avgGap, edge, foamFrac, sideGapW){
   return walls.map(x=>Math.round(x*scaleX));
 }
 
-/* Presence detection */
+/* Occupancy detection (dark vertical run) */
 function cropROI(r){
   const c=document.createElement('canvas'); c.width=r.w; c.height=r.h;
   c.getContext('2d').drawImage(current.image, r.x,r.y,r.w,r.h, 0,0,r.w,r.h);
@@ -501,7 +546,7 @@ function slotOccupied(c){
   return best>=Math.round(cw*0.22);
 }
 
-/* ===== Helpers ===== */
+/* ========= Helpers ========= */
 function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0)h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
 function smooth(a,w){const o=new Float32Array(a.length); for(let i=0;i<a.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=a.length) continue; s+=a[j]; c++;} o[i]=s/c;} return o;}
 function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
@@ -520,7 +565,12 @@ function findPeriod(sig,L,R,lagMin,lagMax){
   return Math.max(10,bestLag);
 }
 
-/* ===== Boot ===== */
+/* ========= Boot ========= */
+(function initUI(){
+  // compute initial side-gap suggestion from inches
+  const border=+borderInEl.value||1.5, slot=+slotInEl.value||0.5, foam=+foamInEl.value||0.5;
+  const period=Math.max(0.1, slot+foam); physSideGap = border/period;
+})();
 (function drawNamesGridEmpty(){ boxGrid.innerHTML=''; for(let r=0;r<5;r++){ for(let c=0;c<12;c++){ const d=document.createElement('div'); d.className='slot'; const s=document.createElement('span'); s.textContent=`#${r*12+c+1}`; d.appendChild(s); boxGrid.appendChild(d);} }})();
 </script>
 </body>
