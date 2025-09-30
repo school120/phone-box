@@ -92,7 +92,7 @@
             <button id="autoBlueBtn" class="primary">Auto-calibrate (lock to blue pads)</button>
             <button id="calibrateBtn">Manual 12×5 grid (fallback)</button>
           </div>
-          <small>Finds 5 blue bars and exactly 12 blue pads per row (won’t split 10/11/12), then places phone rectangles above each number.</small>
+          <small>Finds 5 blue bars and exactly 12 pads per row (won’t split 10/11/12), then places phone rectangles above each number with inner insets (ignore wall/foam edges).</small>
         </div>
       </div>
 
@@ -124,6 +124,9 @@
             <label>Phone band height (% of row height)
               <input id="phonePct" type="range" min="30" max="100" step="5" value="70">
             </label>
+            <label>Phone band side inset (% of column width)
+              <input id="insetPct" type="range" min="0" max="25" step="1" value="10">
+            </label>
             <div style="font-size:12px;color:var(--muted)">Blue bars y: <span id="blueList">—</span></div>
           </div>
         </details>
@@ -151,7 +154,7 @@ const statusEl=document.getElementById('status'), resultsBody=document.getElemen
 const rosterChoice=document.getElementById('rosterChoice'), rosterUpload=document.getElementById('rosterUpload');
 const boxGrid=document.getElementById('boxGrid'), toggleOverlay=document.getElementById('toggleOverlay');
 const blueSatEl=document.getElementById('blueSat'), blueValEl=document.getElementById('blueVal');
-const labelPctEl=document.getElementById('labelPct'), phonePctEl=document.getElementById('phonePct');
+const labelPctEl=document.getElementById('labelPct'), phonePctEl=document.getElementById('phonePct'), insetPctEl=document.getElementById('insetPct');
 const blueListEl=document.getElementById('blueList');
 
 let roster=[], boxConfig={}, mobilenetModel=null, currentImage=null, lastRecords=null;
@@ -226,10 +229,8 @@ function drawOverlay(){
   if(!currentImage || !overlay.width) return;
   const ctx=overlay.getContext('2d'); ctx.clearRect(0,0,overlay.width,overlay.height);
   const cfg=boxConfig[document.getElementById('boxSelect').value||'AUTO']; if(!cfg) return;
-
   const scaleX=overlay.width/currentImage.naturalWidth, scaleY=overlay.height/currentImage.naturalHeight;
 
-  // draw phone-detection ROIs (above numbers)
   if(cfg.roisDetect){
     ctx.lineWidth=2;
     cfg.roisDetect.forEach((roi,i)=>{
@@ -254,6 +255,7 @@ document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
   const vMin=parseFloat(blueValEl.value||'0.25');
   const labelPct = (parseInt(labelPctEl.value||'3',10))/100;   // label band height as % of H
   const phonePct = (parseInt(phonePctEl.value||'70',10))/100;  // phone band height as % of row height
+  const insetPct = (parseInt(insetPctEl.value||'10',10))/100;  // side inset inside each column
 
   const small = downscale(currentImage, 1100);
   const ctx = small.getContext('2d');
@@ -277,21 +279,24 @@ document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
     xRunsByRow.push(runs);
   }
 
-  // 3) derive global column boundaries from median centers of each index
+  // 3) global 12 centers = median per index
   const centersGlobal=[];
   for(let k=0;k<12;k++){
     const vals = xRunsByRow.map(row=>row[k].center).sort((a,b)=>a-b);
     centersGlobal.push(vals[Math.floor(vals.length/2)]);
   }
-  const xBounds = [];
-  // left edge = left of first run; right edge = right of last run (median across rows)
-  const lefts = xRunsByRow.map(r=>r[0].start).sort((a,b)=>a-b);
-  const rights= xRunsByRow.map(r=>r[11].end).sort((a,b)=>a-b);
-  xBounds.push(lefts[Math.floor(lefts.length/2)]);
-  for(let k=0;k<11;k++) xBounds.push(Math.round((centersGlobal[k]+centersGlobal[k+1])/2));
-  xBounds.push(rights[Math.floor(rights.length/2)]); // length 13
 
-  // 4) build detection ROIs (rectangles ABOVE the numbers for phones)
+  // Boundaries between columns = midpoints between adjacent centers.
+  // Outer edges extrapolated from center spacing (prevents spilling to the wall).
+  const xBounds=[];
+  const deltas=[]; for(let k=0;k<11;k++) deltas.push(centersGlobal[k+1]-centersGlobal[k]);
+  const leftEdge  = centersGlobal[0]  - deltas[0]/2;
+  const rightEdge = centersGlobal[11] + deltas[10]/2;
+  xBounds.push(Math.max(0, Math.round(leftEdge)));
+  for(let k=0;k<11;k++) xBounds.push(Math.round((centersGlobal[k]+centersGlobal[k+1])/2));
+  xBounds.push(Math.min(W-1, Math.round(rightEdge))); // length 13
+
+  // 4) build detection ROIs (rectangles ABOVE numbers), with side insets to avoid foam/wall
   const roisDetect=[];
   const detectH = Math.max(10, Math.round(phonePct*rowH)); // band above label
   const detectGap = Math.round(0.04*rowH);                  // small gap above label
@@ -299,14 +304,16 @@ document.getElementById('autoBlueBtn').addEventListener('click', async ()=>{
     const yDet1 = Math.max(0, yBars[r] - detectGap);
     const yDet0 = Math.max(0, yDet1 - detectH);
     for(let c=0;c<12;c++){
-      const x0=xBounds[c], x1=xBounds[c+1];
+      let x0=xBounds[c], x1=xBounds[c+1];
+      const inset = Math.round((x1-x0)*insetPct);
+      x0 += inset; x1 -= inset; // inset from rails/foam/walls on both sides
       roisDetect.push({x:x0/W, y:yDet0/H, w:(x1-x0)/W, h:(yDet1-yDet0)/H});
     }
   }
 
   boxConfig[box] = { roisDetect };
   localStorage.setItem('phonebox_config', JSON.stringify(boxConfig));
-  statusEl.textContent='Auto-calibration complete (rectangles above numbers).';
+  statusEl.textContent='Auto-calibration complete (rectangles above numbers with side insets).';
   drawOverlay();
 });
 
@@ -319,7 +326,9 @@ document.getElementById('calibrateBtn').addEventListener('click',()=>{
   const cellW=gridW/12, cellH=gridH/5;
   for(let r=0;r<5;r++) for(let c=0;c<12;c++){
     const x=(padX+c*cellW)/W, y=(padY+r*cellH)/H, w=cellW/W, h=(0.8*cellH)/H;
-    roisDetect.push({x,y,w,h});
+    // also apply a 10% side inset in manual mode
+    const inset = 0.10*w;
+    roisDetect.push({x:x+inset, y, w:w-2*inset, h});
   }
   boxConfig[box]={roisDetect}; localStorage.setItem('phonebox_config',JSON.stringify(boxConfig));
   alert('Manual grid saved. Use Auto-calibrate to lock to blue pads.');
@@ -356,7 +365,7 @@ async function findFiveBlueLines(canvas, sMin=0.35, vMin=0.25){
   const ctx=canvas.getContext('2d');
   const {data,width:W,height:H} = ctx.getImageData(0,0,canvas.width,canvas.height);
   const score=new Float32Array(H);
-  const x0=Math.round(W*0.08), x1=Math.round(W*0.92);
+  const x0=Math.round(W*0.08), x1=Math.round(W*0.92); // ignore extreme edges
   for(let y=0; y<H; y++){
     let sc=0;
     for(let x=x0; x<x1; x+=2){
@@ -423,7 +432,7 @@ function find12PadRunsInBand(img, yCenter, bandHalf, sMin, vMin){
     if(runs.length > 12) runs = mergeToCountByGap(runs, 12);
 
     if(runs.length === 12){
-      // compute centers from weighted columns (don’t split 10/11/12)
+      // centers from weighted columns (keeps 10/11/12 together)
       runs = runs.map(r=>{
         let s=0,w=0; for(let x=r.start;x<=r.end;x++){ s+= x*col[x]; w+= col[x]; }
         const center = w>0 ? s/w : Math.round((r.start+r.end)/2);
@@ -469,14 +478,13 @@ function mergeToCountByGap(runs, target){
       const gap = runs[i+1].start - runs[i].end - 1;
       if(gap < bestGap){ bestGap=gap; bestI=i; }
     }
-    // merge best pair
     runs[bestI] = {start:runs[bestI].start, end:runs[bestI+1].end};
     runs.splice(bestI+1,1);
   }
   return runs;
 }
 
-/* ---------- Embeddings + occupied/empty ---------- */
+/* ---------- Embeddings + occupied/empty (robust to walls) ---------- */
 async function ensureModel(){ if(!mobilenetModel) mobilenetModel = await mobilenet.load(); }
 function cropToCanvas(img, roi){
   const c=document.createElement('canvas'); const W=img.naturalWidth, H=img.naturalHeight;
@@ -487,19 +495,39 @@ function cropToCanvas(img, roi){
 async function embedCanvas(canvas){ await ensureModel(); const logits=mobilenetModel.infer(canvas,true); const emb=await logits.data(); logits.dispose(); return Array.from(emb); }
 function cosSim(a,b){ let dot=0,na=0,nb=0; for(let i=0;i<a.length;i++){ dot+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } return dot/(Math.sqrt(na)*Math.sqrt(nb)+1e-8); }
 
+/* Occupied check:
+   1) Work on the *center* of the ROI (avoid foam edges & labels).
+   2) Compute per-column dark ratio; require a contiguous run of dark columns
+      covering ≥ 25% of the ROI width (a phone slab), not just edge noise. */
 function slotOccupied(canvas){
   const ctx=canvas.getContext('2d');
-  // sample central band (above numbers)
-  const sx=Math.round(canvas.width*0.15), sy=Math.round(canvas.height*0.15);
-  const sw=Math.round(canvas.width*0.70), sh=Math.round(canvas.height*0.60);
-  const {data}=ctx.getImageData(sx,sy,sw,sh);
-  let sum=0,total=0,dark=0;
-  for(let j=0;j<data.length;j+=4){
-    const y=0.299*data[j]+0.587*data[j+1]+0.114*data[j+2];
-    sum+=y; total++; if(y<140) dark++;
+  const cx = Math.round(canvas.width*0.20);
+  const cw = Math.round(canvas.width*0.60);
+  const cy = Math.round(canvas.height*0.15);
+  const ch = Math.round(canvas.height*0.60);
+  const {data} = ctx.getImageData(cx, cy, cw, ch);
+
+  // per-column dark ratio
+  const cols = new Float32Array(cw).fill(0);
+  const darkCut = 130; // luminance threshold for "dark"
+  for(let y=0; y<ch; y++){
+    for(let x=0; x<cw; x++){
+      const i=(y*cw + x)*4;
+      const L = 0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2];
+      if(L < darkCut) cols[x] += 1;
+    }
   }
-  const mean=(sum/total)/255, darkRatio=dark/total;
-  return mean<0.85 || darkRatio>0.10;
+  for(let x=0;x<cw;x++) cols[x] /= ch;
+
+  // longest contiguous run where column dark ratio > 0.5
+  let best=0, run=0;
+  for(let x=0;x<cw;x++){
+    if(cols[x] > 0.5){ run++; best=Math.max(best,run); }
+    else run=0;
+  }
+
+  // require a solid slab at least 25% of width
+  return best >= Math.round(cw*0.25);
 }
 
 /* ---------- Analyze ---------- */
