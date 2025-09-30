@@ -36,7 +36,8 @@
     .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:6px}
     .slot{background:#0f1738;border:1px solid rgba(255,255,255,.08);aspect-ratio:3/5;border-radius:8px;position:relative}
     .slot span{position:absolute;inset:auto 6px 6px 6px;font-size:10px;color:var(--muted)}
-    </style>\n</head>
+  </style>
+</head>
 <body>
   <header>
     <div style="font-weight:800">📱 Phone Box Attendance</div>
@@ -76,13 +77,9 @@
           </div>
           <div>
             <label>Calibration</label>
-            <div style="display:flex; gap:8px;flex-wrap:wrap">
-              <button id="calibrateBtn">Use this photo to calibrate slots</button>
-              <button id="autoCalBtn" class="primary">Auto‑calibrate from photo (find foam rails)</button>
-            </div>
-            <small>Do this once per box. Auto‑calibrate detects the vertical foam channels and horizontal rails so slots line up with the phones above the numbers.</small>
+            <button id="calibrateBtn">Use this photo to calibrate slots</button>
+            <small>Do this once per box. We save normalized 12×5 regions.</small>
           </div>
-        </div>
         </div>
         <div id="preview" style="margin-top:12px"><small>Photo preview appears here</small></div>
         <div style="display:flex;gap:10px;margin-top:12px">
@@ -186,12 +183,14 @@ rosterChoice.addEventListener('change',()=>{
   rosterUpload.style.display = rosterChoice.value==='upload' ? 'block':'none';
 });
 
-// Simple 12×5 normalized grid (fallback)
+// Calibrate: divide photo into a 12×5 grid, find the foam channels via simple grid assumption.
+// Fast MVP: we store normalized ROIs based on the photo bounds; later runs reuse them.
 const calibrateBtn = document.getElementById('calibrateBtn');
 calibrateBtn.addEventListener('click',()=>{
   const box = document.getElementById('boxSelect').value || 'AUTO';
   if(!currentImage) return alert('Take or upload a photo first.');
   const rois=[]; const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
+  // Assume centered tray; we keep generous margins; tweak if needed in box_config.json later.
   const padX=0.08*W, padY=0.10*H; const gridW = W-2*padX, gridH = H-2*padY;
   const cellW = gridW/12, cellH = gridH/5;
   for(let r=0;r<5;r++){
@@ -201,13 +200,7 @@ calibrateBtn.addEventListener('click',()=>{
   }
   boxConfig[box] = { rois };
   localStorage.setItem('phonebox_config', JSON.stringify(boxConfig));
-  alert('Calibrated with a simple centered 12×5 grid. For better alignment use “Auto‑calibrate from photo”.');
-});
-
-// --- Auto calibration using rail/slot detection (no OpenCV) ---
-function downscale(img, maxW=800){
-  const r = Math.min(1, maxW/img.naturalWidth);
-  const c=document.createElement('canv
+  alert('Calibrated this box using a simple 12×5 grid. You can refine later in box_config.json.');
 });
 
 async function ensureModel(){
