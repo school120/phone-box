@@ -3,244 +3,306 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>Phone Box Checker — Blue‑Bar Anchored Slots (Debug Overlay)</title>
+  <title>Phone Box Checker — Projection + Debug Mask + Roster</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .card{ background:#fff; border-radius:1rem; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:1rem; }
     .btn{ padding:.5rem .75rem; border:1px solid #ddd; border-radius:1rem; }
     .btn-primary{ background:#111827; color:#fff; border-color:#111827; }
     .overlay-wrap{ position:relative; }
-    .overlay-canvas{ position:absolute; left:0; top:0; pointer-events:none; }
-    .small{ font-size:.8rem; color:#6b7280; }
+    .overlay-canvas{ position:absolute; inset:0; pointer-events:none; }
+    .small{ font-size:.85rem; color:#6b7280; }
     .slider{ width:160px; }
+    .badge{ display:inline-block; padding:.15rem .5rem; border-radius:.5rem; font-size:.75rem; }
   </style>
+  <!-- CSV parser -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <!-- React -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- OpenCV -->
   <script src="https://docs.opencv.org/4.x/opencv.js"></script>
 </head>
 <body class="min-h-screen bg-gray-50 text-gray-900">
   <div id="root" class="p-4 sm:p-6"></div>
 
   <script>
-  const { useEffect, useRef, useState } = React;
+  const { useEffect, useRef, useState, useMemo } = React;
 
-  // ===== Utilities =====
-  function robustThreshold(values){
-    const a=[...values].sort((x,y)=>x-y); const n=a.length; if(!n) return 0.02;
+  // ========== ROSTER HELPERS ========== 
+  function parseSecurityNumber(sn=''){
+    const s=String(sn).trim().toUpperCase(); if(!s) return null;
+    let m=s.match(/^\s*(SM\d+)\s*[- ]?\s*(\d{1,2})\s*$/); if(m) return {box:m[1], slot:+m[2]};
+    m=s.match(/^([0-9]{1,2}[A-F])\s*(\d{1,2})$/); if(m) return {box:m[1], slot:+m[2]};
+    m=s.match(/^(.*?)(\d{1,2})$/); if(!m) return null; const box=m[1]; const slot=+m[2]; if(slot<1||slot>60) return null; return {box,slot};
+  }
+  function uniqueBoxes(roster){ const set=new Set(); roster.forEach(r=>{ const p=parseSecurityNumber(r.securityNumber); if(p) set.add(p.box); }); return [...set].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})); }
+
+  // ========== VISION UTILS ========== 
+  function robustThreshold(vals){
+    const a=[...vals]; a.sort((x,y)=>x-y); const n=a.length||1;
     const med=n%2? a[(n-1)/2] : (a[n/2-1]+a[n/2])/2;
     const ad=a.map(v=>Math.abs(v-med)).sort((x,y)=>x-y);
     const mad=n%2? ad[(n-1)/2] : (ad[n/2-1]+ad[n/2])/2;
-    let t=med+1.5*mad; if(!isFinite(t)||t<=0) t=med*1.25+0.003; return Math.min(Math.max(t, med*1.05), med+0.05);
+    let t = med + 1.5*mad; if(!isFinite(t)||t<=0) t = med*1.25 + 0.003; return Math.min(Math.max(t, med*1.05), med+0.05);
   }
 
   function drawOverlay(imgEl, overlayCanvas, W, H, slots, bands){
     const ov=overlayCanvas; const dispW=imgEl.clientWidth, dispH=imgEl.clientHeight; ov.width=dispW; ov.height=dispH;
     const sx=dispW/W, sy=dispH/H; const ctx=ov.getContext('2d'); ctx.clearRect(0,0,ov.width,ov.height);
     ctx.lineWidth=2; ctx.font='10px sans-serif'; ctx.textBaseline='top';
-    // Slots (green/red)
     slots.forEach((s,i)=>{
-      const px=s.x*sx, py=s.y*sy, pw=s.w*sx, ph=s.h*sy; const present=s.present;
-      ctx.strokeStyle = present? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
+      const px=s.x*sx, py=s.y*sy, pw=s.w*sx, ph=s.h*sy;
+      ctx.strokeStyle = s.present? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
       ctx.strokeRect(px,py,pw,ph);
-      const pillW=20, pillH=12; ctx.fillStyle = present? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
-      ctx.fillRect(px+2,py+2,pillW,pillH); ctx.fillStyle='#fff'; ctx.fillText(String(i+1), px+6, py+3);
+      ctx.fillStyle = s.present? 'rgba(0,180,0,0.95)' : 'rgba(220,20,60,0.95)';
+      ctx.fillRect(px+2,py+2,20,12); ctx.fillStyle='#fff'; ctx.fillText(String(i+1), px+6, py+3);
     });
-    // Bottom bands (yellow)
     const yctx=ctx; yctx.strokeStyle='rgba(240,200,0,0.95)';
-    bands.forEach(b=>{ yctx.strokeRect(b.x*sx, b.y*sy, b.w*sx, b.h*sy); });
+    bands.forEach(b=> yctx.strokeRect(b.x*sx, b.y*sy, b.w*sx, b.h*sy));
   }
 
-  // Find the blue number bars (HSV) and the per‑row blue patches to recover 12 columns.
-  function detectBarsAndColumns(cv, src, W, H, hsvRange){
+  function findPeaks(arr, minVal, minDist){
+    const idx = Array.from(arr.keys()); idx.sort((a,b)=>arr[b]-arr[a]);
+    const picked=[]; for(const i of idx){ if(arr[i] < minVal) break; if(picked.every(j=>Math.abs(j-i)>=minDist)) picked.push(i); }
+    picked.sort((a,b)=>a-b); return picked;
+  }
+
+  // Projection-based detector; returns barsY & 12-ish col centers + mask Mats to preview
+  function detectRowsAndColumns(cv, src, W, H, hsvRange){
     const hsv=new cv.Mat(); cv.cvtColor(src,hsv,cv.COLOR_RGBA2HSV);
     const low=new cv.Mat(hsv.rows,hsv.cols,hsv.type(), [hsvRange.hMin, hsvRange.sMin, hsvRange.vMin, 0]);
     const high=new cv.Mat(hsv.rows,hsv.cols,hsv.type(), [hsvRange.hMax, 255, 255, 255]);
     const mask=new cv.Mat(); cv.inRange(hsv, low, high, mask);
-    // Clean up
     const k=cv.Mat.ones(3,3,cv.CV_8U); cv.morphologyEx(mask, mask, cv.MORPH_OPEN, k); cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, k);
 
-    // Bars = wide, thin components
-    const contours=new cv.MatVector(); const hier=new cv.Mat(); cv.findContours(mask, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-    const bars=[];
-    for(let i=0;i<contours.size();i++){
-      const r=cv.boundingRect(contours.get(i));
-      const ar=r.width/(r.height+1e-6);
-      if(r.width>W*0.5 && r.height>H*0.01 && r.height<H*0.12 && ar>4){ bars.push(r); }
-    }
-    bars.sort((a,b)=> a.y-b.y);
+    const rowSum = new Float32Array(H);
+    for (let y=0; y<H; y++){ const row = mask.row(y); rowSum[y] = cv.countNonZero(row); }
+    for (let y=1; y<H-1; y++) rowSum[y] = (rowSum[y-1] + rowSum[y] + rowSum[y+1]) / 3;
+    const minRowBlue = 0.02 * W;
+    let barsY = findPeaks(rowSum, minRowBlue, Math.round(H*0.08)).slice(0,5);
 
-    // Keep up to 5 bars, merge near-duplicates
-    const merged=[]; const tol=H*0.02; // 2% height tolerance
-    for(const r of bars){ if(!merged.length || Math.abs(r.y-merged[merged.length-1])>tol){ merged.push(r); } }
-    const rowBars = merged.slice(0,5); // expected rows ≈ 5
-
-    // For columns, choose the bar with most blue blocks as reference
-    let refCenters=[];
-    for(const bar of rowBars){
-      const roi=mask.roi(bar);
-      const cts=new cv.MatVector(); const hh=new cv.Mat(); cv.findContours(roi, cts, hh, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-      let centers=[];
-      for(let i=0;i<cts.size();i++){
-        const br=cv.boundingRect(cts.get(i)); // local coords in roi
-        const w=br.width, h=br.height; const ar=w/(h+1e-6);
-        if(w>W*0.015 && w<W*0.2 && h>H*0.01 && ar>1){ centers.push(bar.x+br.x+br.width/2); }
+    let colCenters=[];
+    if (barsY.length){
+      let bestRow=barsY[0], bestVal=rowSum[bestRow];
+      for (const r of barsY){ if(rowSum[r] > bestVal){ bestRow=r; bestVal=rowSum[r]; } }
+      const bandHalf = Math.max(6, Math.round(H*0.015));
+      const y0 = Math.max(0, bestRow-bandHalf), y1=Math.min(H-1, bestRow+bandHalf);
+      const colSum = new Float32Array(W);
+      for (let x=0; x<W; x++){ let s=0; for (let y=y0; y<=y1; y++){ if(mask.ucharPtr(y,x)[0]) s++; } colSum[x]=s; }
+      for (let x=1; x<W-1; x++) colSum[x]=(colSum[x-1]+colSum[x]+colSum[x+1])/3;
+      const minColBlue = 0.12 * (y1 - y0 + 1);
+      let colPeaks = findPeaks(colSum, minColBlue, Math.round(W*0.05));
+      if (colPeaks.length < 10){ const step=W/12; colCenters = Array.from({length:12},(_,i)=>(i+0.5)*step); }
+      else {
+        if (colPeaks.length > 12){ const keep=[]; const step = colPeaks.length/12; for(let i=0;i<12;i++) keep.push(colPeaks[Math.round(i*step)]); colPeaks = keep; }
+        colCenters = colPeaks.sort((a,b)=>a-b);
       }
-      centers.sort((a,b)=>a-b);
-      // De-duplicate close centers
-      const uniq=[]; const minDx=W*0.02; centers.forEach(x=>{ if(!uniq.length || Math.abs(x-uniq[uniq.length-1])>minDx) uniq.push(x); });
-      if(uniq.length>refCenters.length){ refCenters=uniq; }
-      roi.delete(); cts.delete(); hh.delete();
+    } else {
+      barsY = Array.from({length:5},(_,i)=> (H*0.20) + i*(H*0.13));
+      const step=W/12; colCenters = Array.from({length:12},(_,i)=>(i+0.5)*step);
     }
 
-    // If we couldn't lock 10–14 centers, fall back to equally spaced 12
-    if(refCenters.length<10){
-      const cols=12; const step=W/cols; refCenters = Array.from({length:cols}, (_,i)=> (i+0.5)*step);
-    }
+    return { barsY, colCenters, mask, hsv, low, high, k };
+  }
 
-    hsv.delete(); low.delete(); high.delete(); mask.delete(); contours.delete(); hier.delete(); k.delete();
-    return { rowBars, colCenters: refCenters };
+  function buildSlots(W, H, barsY, colCenters, bandPct, marginPct){
+    if (barsY.length < 5){ const step = barsY.length>1 ? (barsY[1]-barsY[0]) : (H/6); while (barsY.length < 5) barsY.push(Math.min(H-10, barsY[barsY.length-1] + step)); }
+    const centers = colCenters.slice(0,12);
+    const bounds=[ centers[0] - (centers[1]-centers[0])/2 ];
+    for(let i=0;i<centers.length-1;i++) bounds.push((centers[i]+centers[i+1])/2);
+    bounds.push( centers[centers.length-1] + (centers[centers.length-1]-centers[centers.length-2])/2 );
+
+    const slots=[]; const bands=[];
+    for(let r=0;r<5;r++){
+      const barY=barsY[r];
+      const rh = r<barsY.length-1? (barsY[r+1]-barsY[r]) : (barsY[r] - (barsY[r-1]|| (barsY[r]-H/5)));
+      const rowH = Math.max(H*0.12, Math.min(H*0.28, Math.abs(rh)));
+      const bandH = Math.max(8, rowH*bandPct);
+      const bodyH = Math.max(30, rowH*0.65);
+      const bandY = Math.max(0, Math.min(H-10, barY - bandH - rowH*marginPct));
+      const bodyYTop = Math.max(0, Math.min(H-10, barY - bodyH - rowH*0.10));
+      for(let c=0;c<12;c++){
+        const x0=bounds[c], x1=bounds[c+1]; const w=Math.max(10, x1-x0);
+        slots.push({ x: x0+Math.floor(w*0.08), y: bodyYTop, w: Math.floor(w*0.84), h: Math.floor(bodyH), present:false });
+        bands.push({ x: x0+Math.floor(w*0.10), y: bandY, w: Math.floor(w*0.80), h: Math.floor(Math.min(bandH, rowH*0.35)) });
+      }
+    }
+    return { slots, bands };
   }
 
   function App(){
+    const [cvReady,setCvReady]=useState(false);
+    const [imgReady,setImgReady]=useState(false);
+
+    const [roster,setRoster]=useState([]);
+    const [box,setBox]=useState('');
+
+    const [hsvRange,setHsvRange]=useState({ hMin:90, hMax:140, sMin:40, vMin:40 });
+    const [bandPct,setBandPct]=useState(0.22);
+    const [marginPct,setMarginPct]=useState(0.06);
+
     const [imageURL,setImageURL]=useState(null);
     const [busy,setBusy]=useState(false);
     const [stats,setStats]=useState(null);
-    const [hsvRange,setHsvRange]=useState({ hMin:100, hMax:135, sMin:60, vMin:50 });
-    const [bandPct,setBandPct]=useState(0.22);   // bottom band height as % of row height
-    const [marginPct,setMarginPct]=useState(0.06); // margin above blue bar before band
-    const [rotate,setRotate]=useState(0); // 0, 90, 180, 270
+    const [missing,setMissing]=useState([]);
+    const [showMask,setShowMask]=useState(false);
 
-    const imgRef=useRef(null); const workRef=useRef(null); const overlayRef=useRef(null);
+    const imgRef=useRef(null); const workRef=useRef(null); const overlayRef=useRef(null); const maskRef=useRef(null);
 
-    const onPhoto=(file)=>{ setImageURL(URL.createObjectURL(file)); setStats(null); };
+    useEffect(()=>{
+      if (window.cv && window.cv.onRuntimeInitialized !== undefined){
+        window.cv.onRuntimeInitialized = ()=> setCvReady(true);
+      } else {
+        const check=()=>{ if(window.cv && window.cv.Mat) setCvReady(true); else setTimeout(check, 100); }; check();
+      }
+    },[]);
 
-    const analyze=()=>{
-      if(!window.cv){ alert('OpenCV not ready yet.'); return; }
-      if(!imageURL){ alert('Add a photo first.'); return; }
-      setBusy(true);
-      setTimeout(()=>{ try{ runAnalysis(); } finally{ setBusy(false); } }, 10);
+    useEffect(()=>{ (async()=>{ try{ const r=await fetch('roster.csv',{cache:'no-store'}); if(r.ok){ const t=await r.text(); const p=Papa.parse(t,{header:true,skipEmptyLines:true}); const rows=p.data.map(x=>({ personId:String(x['Person ID']||x.personId||'').trim(), fullName:String(x['Full Name']||x.fullName||'').trim(), securityNumber:String(x['Security Number']||x.securityNumber||'').trim(), grade:String(x['Current Grade']||x.grade||'').trim(), email:String(x['Email 1']||x.email||'').trim() })).filter(x=>x.personId && x.fullName); if(rows.length) setRoster(rows); } }catch(e){} })(); },[]);
+
+    const boxes = useMemo(()=> uniqueBoxes(roster), [roster]);
+
+    const onUploadCSV=(file)=>{ Papa.parse(file,{header:true,skipEmptyLines:true,complete:(res)=>{ const rows=res.data.map(x=>({ personId:String(x['Person ID']||'').trim(), fullName:String(x['Full Name']||'').trim(), securityNumber:String(x['Security Number']||'').trim(), grade:String(x['Current Grade']||'').trim(), email:String(x['Email 1']||'').trim() })).filter(x=>x.personId && x.fullName); setRoster(rows); }}); };
+
+    const onPhoto=(file)=>{
+      const url = URL.createObjectURL(file);
+      setImageURL(url); setStats(null); setMissing([]); setImgReady(false);
+      const img = new Image(); img.onload=()=>{ setImgReady(true); }; img.src=url;
     };
 
+    async function ensureImageReady(){
+      const img = imgRef.current; if(!img) return false; if (img.complete && img.naturalWidth>0) return true; try { await img.decode(); return true; } catch { return false; }
+    }
+
+    const analyze=async()=>{
+      if(!cvReady) return alert('OpenCV still loading… try again in a moment.');
+      if(!imageURL) return alert('Add a photo first.');
+      if(!box) return alert('Pick a box (e.g., 9B, 10A, SM1) so we can compute missing names.');
+      const ok = await ensureImageReady(); if(!ok) return alert('Image not ready yet—try again.');
+      setBusy(true); setTimeout(()=>{ try{ runAnalysis(); } finally{ setBusy(false); } }, 10);
+    };
+
+    function drawMaskPreview(mask){
+      if(!showMask || !mask) return;
+      const w=mask.cols, h=mask.rows; const canvas=maskRef.current; const maxW=280; const scale=maxW/w; canvas.width=maxW; canvas.height=Math.round(h*scale);
+      const dst = new window.cv.Mat(); window.cv.resize(mask, dst, new window.cv.Size(canvas.width, canvas.height)); window.cv.imshow(canvas, dst); dst.delete();
+    }
+
     function runAnalysis(){
-      const img=imgRef.current; const work=workRef.current; let W=img.naturalWidth, H=img.naturalHeight;
-      const ctx=work.getContext('2d');
-      // Apply rotation if requested
-      if(rotate%180===0){ work.width=W; work.height=H; } else { work.width=H; work.height=W; }
-      ctx.save();
-      if(rotate===90){ ctx.translate(work.width,0); ctx.rotate(Math.PI/2); }
-      else if(rotate===180){ ctx.translate(work.width,work.height); ctx.rotate(Math.PI); }
-      else if(rotate===270){ ctx.translate(0,work.height); ctx.rotate(-Math.PI/2); }
-      ctx.drawImage(img,0,0,W,H); ctx.restore();
-      if(rotate%180!==0){ const tmp=W; W=H; H=tmp; }
+      const img=imgRef.current; const work=workRef.current; const W0=img.naturalWidth, H0=img.naturalHeight; work.width=W0; work.height=H0; const ctx=work.getContext('2d'); ctx.drawImage(img,0,0,W0,H0);
+      const cv=window.cv; const src=cv.imread(work); const W=src.cols, H=src.rows;
 
-      const cv=window.cv; const src=cv.imread(work);
+      const { barsY, colCenters, mask, hsv, low, high, k } = detectRowsAndColumns(cv, src, W, H, hsvRange);
+      drawMaskPreview(mask);
 
-      // 1) Detect blue bars and column centers
-      const { rowBars, colCenters } = detectBarsAndColumns(cv, src, W, H, hsvRange);
-      if(!rowBars.length){ src.delete(); alert('Could not find blue number bars. Try adjusting Hue/Sat/Val sliders or rotate 90°.'); return; }
+      const { slots, bands } = buildSlots(W, H, barsY, colCenters, bandPct, marginPct);
 
-      // Estimate row heights from bar y positions
-      const barsY=rowBars.map(b=> b.y + b.height/2).sort((a,b)=>a-b);
-      const rowHeights=[]; for(let i=0;i<barsY.length;i++){ const next=barsY[i+1]|| (barsY[i] + (i? (barsY[i]-barsY[i-1]) : (H/5))); rowHeights.push(Math.max(20, next - barsY[i])); }
-
-      // Build slot rectangles using column centers and per‑row band anchored above blue bar
-      const slots=[]; const bands=[];
-      const cols = 12; // expected
-      const centers = colCenters.slice(0,cols);
-      const bounds=[ centers[0] - (centers[1]-centers[0])/2 ];
-      for(let i=0;i<centers.length-1;i++){ bounds.push( (centers[i]+centers[i+1])/2 ); }
-      bounds.push( centers[centers.length-1] + (centers[centers.length-1]-centers[centers.length-2])/2 );
-
-      for(let r=0;r<Math.min(5,barsY.length);r++){
-        const barY=barsY[r]; const rh=rowHeights[r];
-        const bandH=Math.max(8, rh*bandPct); const bandY=barY - bandH - rh*marginPct;
-        for(let c=0;c<cols;c++){
-          const x0=bounds[c], x1=bounds[c+1]; const w=Math.max(8, x1-x0); const h=Math.max(20, rh*0.65);
-          const yTop = Math.max(0, barY - h - rh*0.10); // phone body window
-          bands.push({ x: x0+Math.floor(w*0.10), y: Math.max(0, bandY), w: Math.floor(w*0.80), h: Math.min(bandH, rh*0.35) });
-          slots.push({ x: x0+Math.floor(w*0.08), y: yTop, w: Math.floor(w*0.84), h: h, present: false });
-        }
-      }
-
-      // 2) Presence detection emphasising the bottom band pattern
       const densities=[]; const densitiesBottom=[];
       for(let i=0;i<slots.length;i++){
         const s=slots[i]; const b=bands[i];
-        const roi1=new cv.Rect(s.x, s.y, s.w, s.h); const mat1=src.roi(roi1);
-        const g1=new cv.Mat(); cv.cvtColor(mat1,g1,cv.COLOR_RGBA2GRAY); const bl1=new cv.Mat(); cv.GaussianBlur(g1,bl1,new cv.Size(5,5),0,0,cv.BORDER_DEFAULT); const e1=new cv.Mat(); cv.Canny(bl1,e1,35,120);
-        densities.push(cv.countNonZero(e1)/(s.w*s.h)); g1.delete(); bl1.delete(); e1.delete(); mat1.delete();
-        const roi2=new cv.Rect(b.x, b.y, b.w, b.h); const mat2=src.roi(roi2);
-        const g2=new cv.Mat(); cv.cvtColor(mat2,g2,cv.COLOR_RGBA2GRAY); const bl2=new cv.Mat(); cv.GaussianBlur(g2,bl2,new cv.Size(3,3),0,0,cv.BORDER_DEFAULT); const e2=new cv.Mat(); cv.Canny(bl2,e2,30,100);
-        densitiesBottom.push(cv.countNonZero(e2)/(b.w*b.h)); g2.delete(); bl2.delete(); e2.delete(); mat2.delete();
+        let mat1=src.roi(new cv.Rect(s.x, s.y, s.w, s.h)); let g1=new cv.Mat(); cv.cvtColor(mat1,g1,cv.COLOR_RGBA2GRAY); let bl1=new cv.Mat(); cv.GaussianBlur(g1,bl1,new cv.Size(5,5),0,0,cv.BORDER_DEFAULT); let e1=new cv.Mat(); cv.Canny(bl1,e1,35,120); densities.push(cv.countNonZero(e1)/(s.w*s.h)); mat1.delete(); g1.delete(); bl1.delete(); e1.delete();
+        let mat2=src.roi(new cv.Rect(b.x, b.y, b.w, b.h)); let g2=new cv.Mat(); cv.cvtColor(mat2,g2,cv.COLOR_RGBA2GRAY); let bl2=new cv.Mat(); cv.GaussianBlur(g2,bl2,new cv.Size(3,3),0,0,cv.BORDER_DEFAULT); let e2=new cv.Mat(); cv.Canny(bl2,e2,30,100); densitiesBottom.push(cv.countNonZero(e2)/(b.w*b.h)); mat2.delete(); g2.delete(); bl2.delete(); e2.delete();
       }
       const thrFull=robustThreshold(densities); const thrBottom=robustThreshold(densitiesBottom);
-      for(let i=0;i<slots.length;i++){ slots[i].present = (densitiesBottom[i]>thrBottom) || (densities[i]>thrFull); }
+      for(let i=0;i<slots.length;i++) slots[i].present = (densitiesBottom[i]>thrBottom) || (densities[i]>thrFull);
 
-      // 3) Draw overlay
       drawOverlay(imgRef.current, overlayRef.current, W, H, slots, bands);
 
-      // Stats/debug
-      setStats({ bars: barsY.length, colsDetected: colCenters.length, thrFull, thrBottom, present: slots.filter(s=>s.present).length });
+      const occupied=new Set(); for(let i=0;i<slots.length;i++) if(slots[i].present) occupied.add(i+1);
+      const group = roster.filter(r=>{ const p=parseSecurityNumber(r.securityNumber); return p && p.box===box; });
+      const missingList = group.filter(stu=>{ const p=parseSecurityNumber(stu.securityNumber); return p && !occupied.has(p.slot); });
 
-      src.delete();
+      setMissing(missingList);
+      setStats({ rowsFound: barsY.length, colsFound: colCenters.length, thrFull: +thrFull.toFixed(4), thrBottom: +thrBottom.toFixed(4), present: occupied.size });
+
+      mask.delete(); hsv.delete(); low.delete(); high.delete(); k.delete(); src.delete();
     }
 
     return React.createElement('div',{className:'max-w-6xl mx-auto space-y-4'},[
       React.createElement('div',{className:'card'},[
-        React.createElement('h1',{className:'text-2xl font-bold'},'Phone Box Checker — Blue‑Bar Anchored Slots'),
-        React.createElement('p',{className:'small'},'We first locate the blue number bars (by color in HSV), use their positions to anchor rows, then find ~12 blue patches across a bar to anchor columns. Each slot ROI is drawn in green/red with a yellow bottom band just above the blue number.')
+        React.createElement('h1',{className:'text-2xl font-bold'},'Phone Box Checker — Projection + Debug Mask + Roster'),
+        React.createElement('div',{className:'flex flex-wrap items-center gap-2 small mt-1'},[
+          React.createElement('span',{className:'badge',style:{background:cvReady?'#DCFCE7':'#FEF3C7', color:'#111'}}, cvReady? 'OpenCV: ✅ ready' : 'OpenCV: loading…'),
+        ]),
+        React.createElement('p',{className:'small mt-2'},'Steps: 1) Upload roster.csv (once), 2) Pick the Box (9A–12F, SM1/SM2), 3) Take/Upload photo, 4) Analyze. If rectangles do not sit above the blue numbers, tweak Hue 90–140 and Sat/Val 40–80.')
       ]),
 
       React.createElement('div',{className:'card'},[
         React.createElement('div',{className:'flex flex-wrap items-center gap-3 text-sm'},[
-          React.createElement('label',{className:'btn'},['Take/Upload Photo', React.createElement('input',{type:'file',accept:'image/*',capture:'environment',className:'hidden',onChange:e=>{ const f=e.target.files?.[0]; if(f) onPhoto(f); }})]),
-          // Make Analyze always visible (only disabled when busy)
-          React.createElement('button',{className:'btn btn-primary',onClick:analyze,disabled:busy}, busy? 'Analyzing…' : 'Analyze & Show Rectangles'),
-          React.createElement('button',{className:'btn',onClick:()=>setRotate(r=> (r+90)%360)},'Rotate 90°'),
-          React.createElement('div',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'small'},'Hue'),
-            React.createElement('input',{className:'slider',type:'range',min:80,max:150,step:1,value:hsvRange.hMin,onChange:e=>setHsvRange({...hsvRange,hMin:parseInt(e.target.value)})}),
-            React.createElement('span',{className:'small'},`${hsvRange.hMin}`),
-            React.createElement('span',{className:'small ml-2'},'→'),
-            React.createElement('input',{className:'slider',type:'range',min:90,max:170,step:1,value:hsvRange.hMax,onChange:e=>setHsvRange({...hsvRange,hMax:parseInt(e.target.value)})}),
-            React.createElement('span',{className:'small'},`${hsvRange.hMax}`)
-          ]),
-          React.createElement('div',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'small'},'Sat min'),
-            React.createElement('input',{className:'slider',type:'range',min:0,max:255,step:1,value:hsvRange.sMin,onChange:e=>setHsvRange({...hsvRange,sMin:parseInt(e.target.value)})}),
-            React.createElement('span',{className:'small'},`${hsvRange.sMin}`)
-          ]),
-          React.createElement('div',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'small'},'Val min'),
-            React.createElement('input',{className:'slider',type:'range',min:0,max:255,step:1,value:hsvRange.vMin,onChange:e=>setHsvRange({...hsvRange,vMin:parseInt(e.target.value)})}),
-            React.createElement('span',{className:'small'},`${hsvRange.vMin}`)
-          ]),
-          React.createElement('div',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'small'},'Band %'),
-            React.createElement('input',{className:'slider',type:'range',min:10,max:40,step:1,value:Math.round(bandPct*100),onChange:e=>setBandPct(parseInt(e.target.value)/100)}),
-            React.createElement('span',{className:'small'},`${Math.round(bandPct*100)}%`)
-          ]),
-          React.createElement('div',{className:'flex items-center gap-2'},[
-            React.createElement('span',{className:'small'},'Above‑bar margin %'),
-            React.createElement('input',{className:'slider',type:'range',min:0,max:20,step:1,value:Math.round(marginPct*100),onChange:e=>setMarginPct(parseInt(e.target.value)/100)}),
-            React.createElement('span',{className:'small'},`${Math.round(marginPct*100)}%`)
+          React.createElement('label',{className:'btn'},['Upload roster.csv', React.createElement('input',{type:'file',accept:'.csv',className:'hidden',onChange:e=>{ const f=e.target.files?.[0]; if(f) onUploadCSV(f); }})]),
+          React.createElement('a',{className:'btn',href:'roster.csv',download:true},'Download current roster.csv'),
+          React.createElement('div',{className:'small'},()=>'Roster rows: '+roster.length),
+          React.createElement('label',{className:'flex items-center gap-2'},[
+            React.createElement('span',{className:'small'},'Box'),
+            React.createElement('select',{className:'border rounded px-2 py-1',value:box,onChange:e=>setBox(e.target.value)},[React.createElement('option',{key:'',value:''},'— Pick —'),...boxes.map(b=>React.createElement('option',{key:b,value:b},b))])
           ])
         ])
       ]),
 
       React.createElement('div',{className:'card'},[
-        React.createElement('h3',{className:'font-semibold mb-2'},'Photo + Overlay'),
-        React.createElement('div',{className:'overlay-wrap'},[
-          imageURL ? React.createElement('img',{ref:imgRef,src:imageURL,alt:'box',className:'w-full h-auto rounded'}) : React.createElement('div',{className:'small p-8'},'Add a photo to see slot rectangles (green/red) and the yellow bottom bands anchored to the blue number bars.'),
-          React.createElement('canvas',{ref:overlayRef,className:'overlay-canvas'})
+        React.createElement('div',{className:'flex flex-wrap items-center gap-3 text-sm'},[
+          React.createElement('label',{className:'btn'},['Take/Upload Photo', React.createElement('input',{type:'file',accept:'image/*',capture:'environment',className:'hidden',onChange:e=>{ const f=e.target.files?.[0]; if(f) onPhoto(f); }})]),
+          React.createElement('button',{className:'btn btn-primary',onClick:analyze,disabled:busy || !cvReady}, ()=> busy? 'Analyzing…' : 'Analyze'),
+          React.createElement('label',{className:'flex items-center gap-2'},[
+            React.createElement('input',{type:'checkbox',checked:showMask,onChange:e=>setShowMask(e.target.checked)}),
+            React.createElement('span',{className:'small'},'Show blue-mask preview')
+          ]),
+          React.createElement('div',{className:'flex items-center gap-2'},[
+            React.createElement('span',{className:'small'},'Hue'),
+            React.createElement('input',{className:'slider',type:'range',min:70,max:160,step:1,value:hsvRange.hMin,onChange:e=>setHsvRange({...hsvRange,hMin:+e.target.value})}),
+            React.createElement('span',{className:'small'},()=>String(hsvRange.hMin)),
+            React.createElement('span',{className:'small ml-2'},'→'),
+            React.createElement('input',{className:'slider',type:'range',min:80,max:180,step:1,value:hsvRange.hMax,onChange:e=>setHsvRange({...hsvRange,hMax:+e.target.value})}),
+            React.createElement('span',{className:'small'},()=>String(hsvRange.hMax))
+          ]),
+          React.createElement('div',{className:'flex items-center gap-2'},[
+            React.createElement('span',{className:'small'},'Sat min'),
+            React.createElement('input',{className:'slider',type:'range',min:0,max:255,step:1,value:hsvRange.sMin,onChange:e=>setHsvRange({...hsvRange,sMin:+e.target.value})}),
+            React.createElement('span',{className:'small'},()=>String(hsvRange.sMin))
+          ]),
+          React.createElement('div',{className:'flex items-center gap-2'},[
+            React.createElement('span',{className:'small'},'Val min'),
+            React.createElement('input',{className:'slider',type:'range',min:0,max:255,step:1,value:hsvRange.vMin,onChange:e=>setHsvRange({...hsvRange,vMin:+e.target.value})}),
+            React.createElement('span',{className:'small'},()=>String(hsvRange.vMin))
+          ]),
+          React.createElement('div',{className:'flex items-center gap-2'},[
+            React.createElement('span',{className:'small'},'Band %'),
+            React.createElement('input',{className:'slider',type:'range',min:10,max:40,step:1,value:Math.round(bandPct*100),onChange:e=>setBandPct(+e.target.value/100)}),
+            React.createElement('span',{className:'small'},()=>Math.round(bandPct*100)+'%')
+          ]),
+          React.createElement('div',{className:'flex items-center gap-2'},[
+            React.createElement('span',{className:'small'},'Above‑bar margin %'),
+            React.createElement('input',{className:'slider',type:'range',min:0,max:20,step:1,value:Math.round(marginPct*100),onChange:e=>setMarginPct(+e.target.value/100)}),
+            React.createElement('span',{className:'small'},()=>Math.round(marginPct*100)+'%')
+          ])
+        ])
+      ]),
+
+      React.createElement('div',{className:'grid md:grid-cols-3 gap-4'},[
+        React.createElement('div',{className:'card md:col-span-2'},[
+          React.createElement('h3',{className:'font-semibold mb-2'},'Photo + Overlay'),
+          React.createElement('div',{className:'overlay-wrap'},[
+            imageURL ? React.createElement('img',{ref:imgRef,src:imageURL,alt:'box',className:'w-full h-auto rounded'}) : React.createElement('div',{className:'small p-8'},'Add a photo to see 60 green/red slot rectangles and yellow bands.'),
+            React.createElement('canvas',{ref:overlayRef,className:'overlay-canvas'})
+          ]),
+          React.createElement('canvas',{ref:workRef,className:'hidden'})
         ]),
-        React.createElement('canvas',{ref:workRef,className:'hidden'})
+        React.createElement('div',{className:'card'},[
+          React.createElement('h3',{className:'font-semibold mb-2'},'Blue Mask (debug)'),
+          React.createElement('canvas',{ref:maskRef,className:'w-full border rounded',style:{background:'#000'}}),
+          React.createElement('div',{className:'small mt-2'},'If this looks mostly black, lower Sat/Val mins or widen Hue (e.g., 90–140).')
+        ])
+      ]),
+
+      (box && missing) && React.createElement('div',{className:'card'},[
+        React.createElement('h3',{className:'font-semibold mb-2'},()=>`Missing — ${box}`),
+        missing.length ? React.createElement('ul',{className:'list-disc list-inside text-sm'}, missing.map(stu=> React.createElement('li',{key:stu.personId}, `${stu.fullName} — ${stu.securityNumber}`))) : React.createElement('div',{className:'small text-green-700'},'No one missing (based on detected occupied slots).')
       ]),
 
       stats && React.createElement('div',{className:'card small'},[
-        React.createElement('div',{},`Detected bars: ${stats.bars}, columns: ${stats.colsDetected}`),
-        React.createElement('div',{},`Thresholds — full: ${stats.thrFull.toFixed(4)}, bottom: ${stats.thrBottom.toFixed(4)}`),
-        React.createElement('div',{},`Estimated present slots: ${stats.present}`)
+        React.createElement('div',{},()=>`Rows found: ${stats.rowsFound}; Columns found: ${stats.colsFound}`),
+        React.createElement('div',{},()=>`Thresholds — full: ${stats.thrFull}, bottom: ${stats.thrBottom}`),
+        React.createElement('div',{},()=>`Estimated phones present: ${stats.present}`)
       ])
     ]);
   }
