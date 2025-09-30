@@ -1,451 +1,311 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box Attendance — Manual Pro Editor (No Dependencies)</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Phone Box Slot Overlay (Auto from Numbers)</title>
+<script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.3/dist/tesseract.min.js"></script>
 <style>
-  :root{--bg:#0b1020;--card:#121833;--muted:#8ea0d0;--accent:#31ccff}
+  :root{--bg:#0b1020;--card:#11183a;--muted:#8ea0d0;--accent:#3ad0ff}
   *{box-sizing:border-box}
   html,body{height:100%}
-  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Ubuntu;background:var(--bg);color:#fff}
-  header{padding:14px 16px;border-bottom:1px solid #ffffff1a;display:flex;gap:12px;align-items:center}
-  .badge{background:#ffffff14;border:1px solid #ffffff1a;padding:4px 8px;border-radius:999px;font-size:12px}
-  main{max-width:1200px;margin:0 auto;padding:12px}
-  .wrap{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
-  .card{background:var(--card);border:1px solid #ffffff14;border-radius:16px;padding:16px;box-shadow:0 10px 30px #0008}
-  h2{margin:0 0 12px;font-weight:800}
-  label{display:block;margin:.5rem 0 .35rem;color:var(--muted);font-size:14px}
-  select,input[type="file"],button{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #ffffff26;background:#0f1738;color:#fff}
+  body{margin:0;background:var(--bg);color:#fff;font-family:system-ui,-apple-system,Segoe UI,Inter,Roboto,Ubuntu}
+  header{padding:12px 16px;border-bottom:1px solid #ffffff1a;font-weight:800}
+  main{max-width:1100px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1fr 320px;gap:16px}
+  #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0d1330}
+  #img{width:100%;display:none}
+  #overlay{position:absolute;inset:0;pointer-events:none}
+  .card{background:var(--card);border:1px solid #ffffff14;border-radius:12px;padding:12px}
+  label{display:block;margin:8px 0 4px;color:var(--muted);font-size:14px}
+  input[type="file"],button,select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #ffffff22;background:#0f1738;color:#fff}
   button.primary{background:linear-gradient(180deg,#39bdf2,#1aa1d9);border:none;font-weight:700}
   small{color:var(--muted)}
-  #stage{position:relative;width:100%;aspect-ratio:3/5;background:#0b1333;border-radius:12px;border:1px dashed #ffffff2b;overflow:hidden;touch-action:none}
-  #img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;transform-origin:0 0}
-  #overlay{position:absolute;inset:0;pointer-events:none}
-  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
-  .seg{display:flex;border:1px solid #ffffff2b;border-radius:10px;overflow:hidden}
-  .seg button{width:auto;border:0;background:#0f1738;padding:10px 12px}
-  .seg button.active{background:#1a2557}
-  .pill{display:inline-block;padding:.15rem .45rem;border-radius:999px;background:#ffffff22;font-size:12px}
-  table{width:100%;border-collapse:collapse}
-  th,td{border-bottom:1px solid #ffffff14;padding:8px 6px;text-align:left}
-  tr.missing{background:#ff50501e}
-  tr.ok{opacity:.75}
-  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:6px}
-  .slot{background:#0f1738;border:1px solid #ffffff14;aspect-ratio:3/5;border-radius:8px;position:relative}
-  .slot span{position:absolute;inset:auto 6px 6px 6px;font-size:10px;color:#9bb0ff}
-  @media (max-width:900px){.wrap{grid-template-columns:1fr} button,select,input[type="file"]{padding:14px 16px;font-size:16px}}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
-<header>
-  <div style="font-weight:800">📱 Phone Box Attendance</div>
-  <div class="badge">Manual Pro Editor • Rows • Edges • 12 slots • Save per box</div>
-</header>
+<header>📱 Phone Box Overlay (auto: find numbers → draw 12×5 slots)</header>
 
 <main>
-  <div class="wrap">
-    <section class="card">
-      <h2>Scan a Box</h2>
+  <section class="card" id="left">
+    <div id="stage">
+      <img id="img" alt="preview">
+      <canvas id="overlay"></canvas>
+    </div>
+  </section>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div>
-          <label>Choose box</label>
-          <select id="box"></select>
-        </div>
-        <div>
-          <label>Roster CSV (optional)</label>
-          <input id="roster" type="file" accept=".csv"/>
-        </div>
+  <section class="card">
+    <label>Upload a box photo</label>
+    <input id="photo" type="file" accept="image/*" capture="environment">
+
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label>Row height % (above the blue number bar)</label>
+        <input id="rowPct" type="range" min="40" max="100" step="5" value="70">
       </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
-        <div>
-          <label>Take/Upload a photo</label>
-          <input id="photo" type="file" accept="image/*" capture="environment"/>
-        </div>
-        <div>
-          <label>Helpers</label>
-          <div class="toolbar">
-            <button id="equalRow">Equal 12 (current row)</button>
-            <button id="copyRow">Copy current row → all</button>
-            <label style="display:flex;align-items:center;gap:8px;margin-left:auto">
-              <input id="useSaved" type="checkbox" style="width:auto"> Use saved layout
-            </label>
-          </div>
-          <small>Cyan = 5 row tops (sit on blue strips). Yellow = row left/right. White = 13 vertical boundaries per row (slots).</small>
-        </div>
+      <div>
+        <label>Edge crop % (ignore sides)</label>
+        <input id="edgePct" type="range" min="0" max="12" step="1" value="4">
       </div>
+    </div>
 
-      <div id="stage" style="margin-top:12px">
-        <img id="img" alt="preview"/>
-        <canvas id="overlay"></canvas>
-      </div>
+    <div class="row" style="margin-top:10px">
+      <button id="scan" class="primary">Scan & Overlay</button>
+      <button id="clear">Clear</button>
+    </div>
 
-      <div class="toolbar">
-        <div class="seg" id="modeSeg">
-          <button data-mode="rows" class="active">Rows</button>
-          <button data-mode="edges">Edges</button>
-          <button data-mode="slots">Slots</button>
-        </div>
-
-        <div class="seg" id="rowSeg"></div>
-
-        <div class="seg">
-          <button id="nudgeM5">◀︎◀︎</button>
-          <button id="nudgeM1">◀︎</button>
-          <button id="nudgeP1">▶︎</button>
-          <button id="nudgeP5">▶︎▶︎</button>
-        </div>
-
-        <div class="seg">
-          <button id="zoomOut">−</button>
-          <button id="zoomReset">100%</button>
-          <button id="zoomIn">+</button>
-        </div>
-
-        <label style="display:flex;align-items:center;gap:8px">
-          Opacity <input id="opacity" type="range" min="0.1" max="1" step="0.05" value="0.9" style="width:160px">
-        </label>
-
-        <div style="margin-left:auto;display:flex;gap:8px">
-          <button id="saveLayout">Save layout</button>
-          <button id="loadLayout">Load layout</button>
-          <button id="exportLayouts">Export</button>
-          <label style="display:inline-flex;gap:8px;align-items:center">
-            <input id="importLayouts" type="file" accept="application/json" style="display:none">
-            <span style="border:1px solid #ffffff2b;padding:10px 12px;border-radius:10px;cursor:pointer" onclick="document.getElementById('importLayouts').click()">Import</span>
-          </label>
-        </div>
-      </div>
-
+    <div style="margin-top:10px">
+      <label><input type="checkbox" id="showGuides" checked> Show guides</label>
       <small id="status"></small>
-    </section>
+    </div>
 
-    <section class="card">
-      <h2>Results</h2>
-      <div id="boxGrid" class="grid" style="margin-bottom:10px"></div>
-      <table>
-        <thead><tr><th>Slot</th><th>Expected</th><th>Status</th></tr></thead>
-        <tbody id="results"></tbody>
-      </table>
-      <div class="toolbar">
-        <button id="analyze" class="primary">Analyze Attendance</button>
-      </div>
-    </section>
-  </div>
+    <details style="margin-top:10px">
+      <summary>What it does</summary>
+      <small>
+        1) Finds the 5 blue number bars.<br>
+        2) OCR reads the printed numbers (1..60).<br>
+        3) For each row, uses those number boxes to build 12 slots (13 vertical boundaries).<br>
+        4) Draws rectangles just above each number.
+      </small>
+    </details>
+  </section>
 </main>
 
 <script>
-/* ---------- Boxes ---------- */
-const boxSel=document.getElementById('box');
-(function fillBoxes(){
-  const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
-  grades.forEach(g=>letters.forEach(l=>ids.push(g+l)));
-  ids.push('SM1','SM2');
-  boxSel.innerHTML = ids.map(x=>`<option>${x}</option>`).join('');
-})();
+const img = document.getElementById('img');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
+const statusEl = document.getElementById('status');
+const showGuides = document.getElementById('showGuides');
+const rowPctEl = document.getElementById('rowPct');
+const edgePctEl = document.getElementById('edgePct');
+let worker = null;
 
-/* ---------- State ---------- */
-let roster=[], currentImg=null, W=0, H=0;
-let guides=null; // {rows:[y], LR:[[L,R]×5], bounds:[[13]×5]}
-let rois=[];     // 60 rects {x,y,w,h,row,col}
-let mode='rows', selRow=0;
-let view={z:1,x:0,y:0}; // zoom/pan
+let current = null;     // {image: HTMLImageElement, W, H}
+let rowTops = [];       // [y] 5 items (bottom edge of each slot area = top of blue bar)
+let boundsByRow = [];   // per row: [x0..x12] 13 entries
+let rois = [];          // 60 rects to draw
 
-/* ---------- DOM ---------- */
-const stage=document.getElementById('stage'), img=document.getElementById('img');
-const overlay=document.getElementById('overlay'), ctx=overlay.getContext('2d');
-const statusEl=document.getElementById('status'), resultsBody=document.getElementById('results');
-const opacityEl=document.getElementById('opacity'), useSaved=document.getElementById('useSaved');
-
-/* ---------- Utils ---------- */
-const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+function setStatus(t){ statusEl.textContent = t; }
 function fitCanvas(){
-  if(!currentImg) return;
-  const r=stage.getBoundingClientRect();
-  overlay.width=r.width; overlay.height=r.height;
-  W=currentImg.naturalWidth; H=currentImg.naturalHeight;
-  img.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.z})`;
+  if(!current) return;
+  const stage = document.getElementById('stage').getBoundingClientRect();
+  overlay.width = stage.width;
+  overlay.height = stage.width * (current.H / current.W);
+  document.getElementById('left').style.aspectRatio = `${current.W}/${current.H}`;
   draw();
 }
 window.addEventListener('resize', fitCanvas);
-function status(t){statusEl.textContent=t||''}
 
-/* ---------- Roster (tiny CSV parser) ---------- */
-document.getElementById('roster').addEventListener('change', e=>{
-  const f=e.target.files[0]; if(!f) return;
-  const r=new FileReader();
-  r.onload=()=>{
-    const lines=r.result.split(/\r?\n/).filter(Boolean);
-    const header=lines.shift().split(',').map(s=>s.trim());
-    roster=lines.map(line=>{
-      const cols=line.split(',').map(s=>s.trim());
-      const rec={}; header.forEach((h,i)=>rec[h]=cols[i]||''); return rec;
-    });
-    status('Roster loaded.');
+document.getElementById('photo').addEventListener('change', (e)=>{
+  const f = e.target.files[0]; if(!f) return;
+  const url = URL.createObjectURL(f);
+  const im = new Image();
+  im.onload = () => {
+    current = { image: im, W: im.naturalWidth, H: im.naturalHeight };
+    img.src = url; img.style.display='block';
+    fitCanvas();
+    setStatus('Photo loaded. Tap “Scan & Overlay”.');
   };
-  r.readAsText(f);
+  im.src = url;
 });
-function boxFromSec(s){ if(!s) return null; s=String(s).toUpperCase().replace(/\s+/g,''); const m=s.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/); return m?{box:m[1],slot:parseInt(m[2],10)}:null; }
-function namesForBox(id){
-  const out={}; for(const row of roster){ const m=boxFromSec(row['Security Number']||row.SecurityNumber); if(m&&m.box===id) out[m.slot]=row['Full Name']||row.FullName||''; }
-  return out;
-}
-function drawGrid(names={}){
-  const grid=document.getElementById('boxGrid'); grid.innerHTML='';
-  for(let i=1;i<=60;i++){ const d=document.createElement('div'); d.className='slot'; const s=document.createElement('span'); s.textContent=names[i]||`#${i}`; d.appendChild(s); grid.appendChild(d); }
-}
 
-/* ---------- Default guides ---------- */
-function resetGuides(){
-  guides={
-    rows:[0.20,0.38,0.56,0.74,0.92].map(v=>Math.round(v*H)),
-    LR:Array.from({length:5},()=>[Math.round(0.06*W),Math.round(0.94*W)]),
-    bounds:Array.from({length:5},()=>equalBounds( Math.round(0.06*W), Math.round(0.94*W), 12 ))
-  };
-  computeROIs();
-  buildRowSeg();
-  draw();
-}
-function equalBounds(L,R,n){const s=(R-L)/n, b=[Math.round(L)]; for(let i=1;i<n;i++) b.push(Math.round(L+i*s)); b.push(Math.round(R)); return b;}
-function computeROIs(){
-  rois=[];
-  const gaps=[]; for(let i=1;i<guides.rows.length;i++) gaps.push(guides.rows[i]-guides.rows[i-1]);
-  const h=Math.max(12, Math.round((gaps.reduce((a,b)=>a+b,0)/gaps.length||H/5)*0.70));
+document.getElementById('clear').addEventListener('click', ()=>{
+  rowTops=[]; boundsByRow=[]; rois=[]; ctx.clearRect(0,0,overlay.width,overlay.height); setStatus('');
+});
+
+document.getElementById('scan').addEventListener('click', async ()=>{
+  if(!current){ alert('Upload a photo first.'); return; }
+  setStatus('Scanning…');
+  if(!worker){
+    worker = await Tesseract.createWorker('eng', 1, {
+      corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.3/tesseract-core.wasm.js',
+      workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.0.3/dist/worker.min.js'
+    });
+  }
+  // 1) detect 5 blue bars
+  rowTops = await findBlueBars(current.image, parseInt(edgePctEl.value,10)/100);
+  if(rowTops.length!==5){ setStatus('Could not find 5 blue bars. Try a straighter photo or tweak edge crop %'); draw(); return; }
+
+  // 2) per row: OCR numbers on the blue bar to place 12 slots
+  boundsByRow = [];
+  const gaps = []; for(let i=1;i<rowTops.length;i++) gaps.push(rowTops[i]-rowTops[i-1]);
+  const avgGap = gaps.reduce((a,b)=>a+b,0)/gaps.length;
+  const bandH = Math.max(20, Math.round(avgGap*0.30)); // tall enough to include the digits
+
   for(let r=0;r<5;r++){
-    const yB=guides.rows[r], yT=Math.max(0,yB-h);
-    const b=guides.bounds[r];
-    for(let c=0;c<12;c++){
-      const x0=b[c], x1=b[c+1]; const inset=Math.round((x1-x0)*0.10);
-      rois.push({x:x0+inset, y:yT, w:x1-x0-2*inset, h:yB-yT, row:r, col:c});
+    const y0 = Math.max(0, rowTops[r]-3);
+    const y1 = Math.min(current.H-1, rowTops[r] + bandH);
+    const crop = cropRectCanvas(current.image, 0, y0, current.W, y1-y0+1);
+    const data = await worker.recognize(crop, {
+      tessedit_char_whitelist:'0123456789',
+      tessedit_pageseg_mode: '7'
+    });
+    const words = data.data.words || [];
+    // numbers in this row (global 1..60)
+    const rowStart = r*12 + 1, rowEnd = rowStart + 11;
+    let nums = words
+      .map(w => ({ txt: (w.text||'').replace(/\D/g,''), bbox: w.bbox }))
+      .filter(w => w.txt.length>0)
+      .map(w => ({ n: parseInt(w.txt,10), x: (w.bbox.x0 + w.bbox.x1)/2, L:w.bbox.x0, R:w.bbox.x1 }))
+      .filter(o => o.n>=rowStart && o.n<=rowEnd)
+      .sort((a,b)=>a.x-b.x);
+
+    // if OCR missed some, try to coalesce/repair
+    nums = dedupeByX(nums, 12); // remove near-duplicates
+    // convert to 12 slot centers using known sequence
+    const centers = new Array(12).fill(null);
+    nums.forEach(o => { const idx = o.n - rowStart; if(idx>=0 && idx<12) centers[idx]=o.x; });
+    // fill missing by interpolation
+    let left=null,right=null;
+    for(let i=0;i<12;i++){
+      if(centers[i]==null){
+        // find nearest known on left/right
+        left = i-1; while(left>=0 && centers[left]==null) left--;
+        right = i+1; while(right<12 && centers[right]==null) right++;
+        if(left>=0 && right<12){
+          const step = (centers[right]-centers[left])/(right-left);
+          centers[i] = centers[left] + step*(i-left);
+        }else if(left>=0){
+          centers[i] = centers[left] + (centers[left]-centers[Math.max(0,left-1)]);
+        }else if(right<12){
+          centers[i] = centers[right] - (centers[Math.min(11,right+1)]-centers[right]);
+        }else{
+          // totally empty: fall back to equal spacing across image width (excluding edges a bit)
+          centers[i] = (current.W*0.08) + (current.W*0.84) * (i/11);
+        }
+      }
+    }
+    // make 13 boundaries
+    const bounds = [];
+    const stepAvg = (centers[11]-centers[0])/11;
+    bounds.push(Math.round(centers[0]-stepAvg/2));
+    for(let i=0;i<11;i++) bounds.push(Math.round((centers[i]+centers[i+1])/2));
+    bounds.push(Math.round(centers[11]+stepAvg/2));
+    // clamp
+    bounds[0]=Math.max(0,bounds[0]); bounds[12]=Math.min(current.W-1,bounds[12]);
+    boundsByRow.push(bounds);
+  }
+
+  // 3) build rectangles above each blue bar using the bounds
+  rois = [];
+  const pct = parseInt(rowPctEl.value,10)/100;
+  for(let r=0;r<5;r++){
+    const yBottom = rowTops[r];
+    const yTop = Math.max(0, Math.round(yBottom - avgGap*pct));
+    const b = boundsByRow[r];
+    for(let i=0;i<12;i++){
+      const x0=b[i], x1=b[i+1];
+      const inset = Math.round((x1-x0)*0.10);
+      rois.push({ x:x0+inset, y:yTop, w:Math.max(1,(x1-x0-2*inset)), h:yBottom-yTop });
+    }
+  }
+
+  setStatus('Overlay ready.');
+  draw();
+});
+
+function draw(){
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  if(!current) return;
+  const sx = overlay.width/current.W, sy = overlay.height/current.H;
+
+  // guides
+  if(showGuides.checked && rowTops.length){
+    // cyan lines = blue bar tops
+    ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent')||'#3ad0ff';
+    ctx.lineWidth=2;
+    for(const y of rowTops){
+      ctx.beginPath(); ctx.moveTo(0, y*sy); ctx.lineTo(overlay.width, y*sy); ctx.stroke();
+    }
+    // white vertical bounds (13 per row)
+    if(boundsByRow.length){
+      ctx.strokeStyle='#fff'; ctx.lineWidth=1.5;
+      boundsByRow.forEach((bounds,ri)=>{
+        const y=rowTops[ri]*sy;
+        bounds.forEach(x=>{
+          const xx=x*sx; ctx.beginPath(); ctx.moveTo(xx, y-40); ctx.lineTo(xx, y+40); ctx.stroke();
+        });
+      });
+    }
+  }
+
+  // rectangles
+  if(rois.length){
+    ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth=2;
+    for(const r of rois){
+      ctx.strokeRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy);
     }
   }
 }
 
-/* ---------- Photo ---------- */
-document.getElementById('photo').addEventListener('change', e=>{
-  const f=e.target.files[0]; if(!f) return;
-  const url=URL.createObjectURL(f); const im=new Image();
-  im.onload=()=>{ currentImg=im; img.src=url; img.style.display='block'; view={z:1,x:0,y:0}; fitCanvas(); if(useSaved.checked) loadLayout(); else resetGuides(); status('Photo loaded. Align rows/edges/slots, then Save.'); };
-  im.src=url;
-});
+/* --- helpers --- */
 
-/* ---------- Mode/Row/Nudge ---------- */
-const modeSeg=document.getElementById('modeSeg');
-modeSeg.addEventListener('click', e=>{
-  if(e.target.tagName!=='BUTTON') return;
-  [...modeSeg.children].forEach(b=>b.classList.remove('active'));
-  e.target.classList.add('active');
-  mode=e.target.dataset.mode;
-  draw();
-});
-function buildRowSeg(){
-  const seg=document.getElementById('rowSeg'); seg.innerHTML='';
-  for(let i=0;i<5;i++){ const b=document.createElement('button'); b.textContent=(i+1); if(i===selRow) b.classList.add('active'); b.onclick=()=>{ selRow=i; buildRowSeg(); draw(); }; seg.appendChild(b); }
-}
-['nudgeM5','nudgeM1','nudgeP1','nudgeP5'].forEach(id=>document.getElementById(id).onclick=()=>nudge(id));
-function nudge(id){
-  const d=id==='nudgeM5'?-5:id==='nudgeM1'?-1:id==='nudgeP1'?1:5;
-  if(mode==='rows'){
-    guides.rows[selRow]=clamp(guides.rows[selRow]+d, 0, H-2);
-  }else if(mode==='edges'){
-    let [L,R]=guides.LR[selRow]; L=clamp(L+d,0,W-20); R=clamp(R+d,20,W); guides.LR[selRow]=[L,R];
-    const fr=guides.bounds[selRow].map(x=> (x-groupsL(selRow))/(groupsR(selRow)-groupsL(selRow)));
-    guides.bounds[selRow]=fr.map(f=>Math.round(L+f*(R-L)));
-  }else{
-    const b=guides.bounds[selRow]; let idx=nearestIdx(b, imgX(overlay.width/2));
-    b[idx]=clamp(b[idx]+d, idx?b[idx-1]+2:0, idx<b.length-1?b[idx+1]-2:W);
-  }
-  computeROIs(); draw();
-}
-function nearestIdx(arr,x){let bi=0,b=1e9; arr.forEach((v,i)=>{const d=Math.abs(v-x); if(d<b){b=d;bi=i;}}); return bi;}
-function groupsL(r){return guides.LR[r][0]} function groupsR(r){return guides.LR[r][1]}
-
-/* ---------- Helpers buttons ---------- */
-document.getElementById('equalRow').onclick=()=>{ const [L,R]=guides.LR[selRow]; guides.bounds[selRow]=equalBounds(L,R,12); computeROIs(); draw(); };
-document.getElementById('copyRow').onclick=()=>{ const from=selRow; for(let r=0;r<5;r++){ if(r===from) continue; guides.LR[r]=[...guides.LR[from]]; guides.bounds[r]=[...guides.bounds[from]]; } computeROIs(); draw(); };
-
-/* ---------- Save/Load/Export/Import layouts ---------- */
-document.getElementById('saveLayout').onclick=saveLayout;
-document.getElementById('loadLayout').onclick=loadLayout;
-document.getElementById('exportLayouts').onclick=exportLayouts;
-document.getElementById('importLayouts').addEventListener('change',importLayouts);
-useSaved.addEventListener('change',()=>{ if(useSaved.checked) loadLayout(); });
-
-function saveLayout(){
-  if(!boxSel.value||!guides) return alert('Choose a box and load a photo first.');
-  const pack={
-    rows: guides.rows.map(y=>y/H),
-    LR: guides.LR.map(([L,R])=>[L/W,R/W]),
-    bounds: guides.bounds.map((b,r)=>{const [L,R]=guides.LR[r]; return b.map(x=>(x-L)/Math.max(1,(R-L)));})
-  };
-  localStorage.setItem('pbx_layout_'+boxSel.value, JSON.stringify(pack));
-  status('Layout saved for '+boxSel.value);
-}
-function loadLayout(){
-  const raw=localStorage.getItem('pbx_layout_'+boxSel.value); if(!raw){ status('No saved layout for '+boxSel.value); resetGuides(); return; }
-  const p=JSON.parse(raw);
-  guides={
-    rows:p.rows.map(f=>Math.round(f*H)),
-    LR:p.LR.map(([fl,fr])=>[Math.round(fl*W),Math.round(fr*W)]),
-    bounds:p.bounds.map((fracs,r)=>{const [L,R]=[Math.round(p.LR[r][0]*W),Math.round(p.LR[r][1]*W)]; return fracs.map(f=>Math.round(L+f*(R-L)));})
-  };
-  computeROIs(); buildRowSeg(); draw(); status('Layout loaded.');
-}
-function exportLayouts(){
-  const all={};
-  for(let i=0;i<localStorage.length;i++){
-    const k=localStorage.key(i);
-    if(k.startsWith('pbx_layout_')) all[k.replace('pbx_layout_','')]=JSON.parse(localStorage.getItem(k));
-  }
-  const blob=new Blob([JSON.stringify(all)],{type:'application/json'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='phonebox_layouts.json'; a.click();
-}
-function importLayouts(e){
-  const f=e.target.files[0]; if(!f) return;
-  const r=new FileReader(); r.onload=()=>{ const obj=JSON.parse(r.result); for(const [k,v] of Object.entries(obj)) localStorage.setItem('pbx_layout_'+k,JSON.stringify(v)); status('Layouts imported.'); }; r.readAsText(f);
+function cropRectCanvas(imgEl, x,y,w,h){
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  c.getContext('2d').drawImage(imgEl, x,y,w,h, 0,0,w,h);
+  return c;
 }
 
-/* ---------- Analyze ---------- */
-document.getElementById('analyze').onclick=()=>{
-  if(!rois.length) return alert('Align layout first.');
-  const names = namesForBox(boxSel.value);
-  drawGrid(names);
-  const rows=[];
-  for(let i=0;i<rois.length;i++){
-    const slot=i+1, expected=names[slot]||'';
-    const occ = occupied(cropROI(rois[i]));
-    const status = occ ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
-    rows.push({slot,expected,status});
-  }
-  resultsBody.innerHTML='';
-  rows.forEach(r=>{
-    const tr=document.createElement('tr'); tr.className=r.status==='missing'?'missing':(r.status==='present'?'ok':'');
-    tr.innerHTML=`<td>${r.slot}</td><td>${r.expected||''}</td><td><span class="pill">${r.status}</span></td>`;
-    resultsBody.appendChild(tr);
-  });
-};
-
-/* ---------- Presence detection ---------- */
-function cropROI(r){const c=document.createElement('canvas'); c.width=r.w; c.height=r.h; const k=c.getContext('2d'); k.drawImage(currentImg, r.x,r.y,r.w,r.h, 0,0,r.w,r.h); return c;}
-function occupied(c){
-  const k=c.getContext('2d');
-  // center band to avoid walls & labels
-  const cx=Math.round(c.width*0.20), cw=Math.round(c.width*0.60);
-  const cy=Math.round(c.height*0.15), ch=Math.round(c.height*0.60);
-  const {data}=k.getImageData(cx,cy,cw,ch);
-  const cols=new Float32Array(cw).fill(0), dark=130;
-  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){
-    const i=(y*cw+x)*4; const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2];
-    if(L<dark) cols[x]++;
-  }
-  for(let x=0;x<cw;x++) cols[x]/=ch;
-  let best=0,run=0;
-  for(let x=0;x<cw;x++){ if(cols[x]>0.5){run++; best=Math.max(best,run);} else run=0; }
-  return best>=Math.round(cw*0.25);
+function rgb2hsv(r,g,b){
+  r/=255; g/=255; b/=255;
+  const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
+  let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; }
+  const s=max===0?0:d/max, v=max; return {h,s,v};
 }
 
-/* ---------- Drawing ---------- */
-opacityEl.addEventListener('input', draw);
-function draw(){
-  if(!currentImg||!guides){ ctx.clearRect(0,0,overlay.width,overlay.height); return; }
-  const sx=overlay.width/W*view.z, sy=overlay.height/H*view.z;
-  overlay.style.opacity=opacityEl.value;
-  ctx.clearRect(0,0,overlay.width,overlay.height);
-  ctx.save(); ctx.translate(view.x,view.y); ctx.scale(view.z,view.z);
+async function findBlueBars(imgEl, edgeCrop){
+  // downscale for speed
+  const maxW=1200;
+  const r=Math.min(1, maxW/imgEl.naturalWidth);
+  const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
+  const {data}=g.getImageData(0,0,W,H);
 
-  // Dim non-selected rows in edges/slots mode
-  if(mode!=='rows'){
-    ctx.fillStyle='rgba(0,0,0,0.25)';
-    guides.rows.forEach((y,i)=>{ if(i!==selRow) ctx.fillRect(0, y-120, W, 240); });
+  const hueMin=190, hueMax=265, sMin=0.30, vMin=0.22;
+  const x0=Math.round(W*edgeCrop), x1=Math.round(W*(1-edgeCrop));
+  const frac=new Float32Array(H);
+
+  for(let y=0;y<H;y++){
+    let cnt=0, blue=0;
+    for(let x=x0;x<=x1;x+=2){
+      const i=(y*W+x)*4; const {h,s,v}=rgb2hsv(data[i],data[i+1],data[i+2]);
+      if((h>hueMin&&h<hueMax)&&s>=sMin&&v>=vMin) blue++; cnt++;
+    }
+    frac[y]=cnt?blue/cnt:0;
   }
 
-  // Cyan row lines
-  ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent')||'#31ccff';
-  ctx.lineWidth=2/view.z;
-  guides.rows.forEach(y=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
+  const smooth = (arr,w=6)=>{ const out=new Float32Array(arr.length); for(let i=0;i<arr.length;i++){ let s=0,cnt=0; for(let k=-w;k<=w;k++){ const j=i+k; if(j<0||j>=arr.length) continue; s+=arr[j]; cnt++; } out[i]=s/cnt; } return out; }
+  const s = smooth(frac,6);
 
-  // Yellow L/R per row
-  ctx.strokeStyle='#ffd84a'; ctx.lineWidth=1.5/view.z;
-  guides.LR.forEach(([L,R],i)=>{ const y=guides.rows[i], h=80;
-    ctx.beginPath(); ctx.moveTo(L,y-h); ctx.lineTo(L,y+h); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(R,y-h); ctx.lineTo(R,y+h); ctx.stroke();
-  });
-
-  // White boundaries per row
-  ctx.strokeStyle='#fff'; ctx.lineWidth=(mode==='slots'?3:1.8)/view.z;
-  guides.bounds.forEach((b,i)=>{ const y=guides.rows[i], h=90; b.forEach(x=>{ ctx.beginPath(); ctx.moveTo(x,y-h); ctx.lineTo(x,y+h); ctx.stroke(); }); });
-
-  // Slot rectangles
-  rois.forEach(r=>{ ctx.strokeStyle='#ffffffea'; ctx.lineWidth=2/view.z; ctx.strokeRect(r.x,r.y,r.w,r.h); });
-
-  ctx.restore();
-}
-
-/* ---------- Interaction: drag edit ---------- */
-let dragging=null;
-stage.addEventListener('pointerdown', e=>{
-  if(!currentImg||!guides) return;
-  const {ix,iy}=screenToImage(e.clientX,e.clientY);
-  if(mode==='rows'){
-    // pick nearest row
-    let i=0,b=1e9; guides.rows.forEach((y,ri)=>{const d=Math.abs(y-iy); if(d<b){b=d;i=ri;}}); dragging={type:'row',i,dy:guides.rows[i]-iy};
-  }else if(mode==='edges'){
-    // nearest L or R on current row
-    const [L,R]=guides.LR[selRow]; const dL=Math.abs(L-ix), dR=Math.abs(R-ix);
-    dragging={type:dL<dR?'L':'R', row:selRow, dx:(dL<dR?L:R)-ix};
-  }else{
-    // nearest boundary on current row
-    const b=guides.bounds[selRow]; let bi=0,bd=1e9; b.forEach((x,i)=>{const d=Math.abs(x-ix); if(d<bd){bd=d;bi=i;}}); dragging={type:'B', row:selRow, idx:bi, dx:b[bi]-ix};
+  // pick 5 best-separated peaks
+  const peaks = pickPeaks(s,5,Math.round(H/8));
+  const tops=[];
+  const win=Math.round(H*0.035);
+  for(const p of peaks){
+    let maxv=0; for(let y=Math.max(0,p-win); y<=Math.min(H-1,p+win); y++) maxv=Math.max(maxv, s[y]);
+    const T=maxv*0.5;
+    let top=p; for(let y=p;y>=0;y--){ if(s[y]>=T) top=y; else break; }
+    tops.push(top);
   }
-  stage.setPointerCapture(e.pointerId);
-});
-stage.addEventListener('pointermove', e=>{
-  if(!dragging) return;
-  const {ix,iy}=screenToImage(e.clientX,e.clientY);
-  if(dragging.type==='row'){
-    const i=dragging.i;
-    let y=iy+dragging.dy;
-    const min = i?guides.rows[i-1]+20:0;
-    const max = i<4?guides.rows[i+1]-20:H-2;
-    guides.rows[i]=clamp(y,min,max);
-  }else if(dragging.type==='L'||dragging.type==='R'){
-    const r=dragging.row; let x=ix+dragging.dx; let [L,R]=guides.LR[r];
-    if(dragging.type==='L'){ x=clamp(x,0,R-20); L=x; }
-    else { x=clamp(x,L+20,W); R=x; }
-    // remap bounds by fractions
-    const fr=guides.bounds[r].map(v=> (v-guides.LR[r][0]) / Math.max(1,(guides.LR[r][1]-guides.LR[r][0])) );
-    guides.LR[r]=[L,R];
-    guides.bounds[r]=fr.map(f=>Math.round(L+f*(R-L)));
-  }else{
-    const r=dragging.row, i=dragging.idx, b=guides.bounds[r]; let x=ix+dragging.dx;
-    const min=i?b[i-1]+2:0, max=i<b.length-1?b[i+1]-2:W;
-    b[i]=clamp(x,min,max);
-  }
-  computeROIs(); draw();
-});
-stage.addEventListener('pointerup', ()=>dragging=null);
-
-/* ---------- Zoom / Pan ---------- */
-document.getElementById('zoomIn').onclick=()=>{ view.z=Math.min(4,view.z*1.25); img.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.z})`; draw(); };
-document.getElementById('zoomOut').onclick=()=>{ view.z=Math.max(0.5,view.z/1.25); img.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.z})`; draw(); };
-document.getElementById('zoomReset').onclick=()=>{ view={z:1,x:0,y:0}; img.style.transform=`translate(0px,0px) scale(1)`; draw(); };
-let panning=false, p0=null;
-stage.addEventListener('pointerdown', e=>{ if(e.button===1 || e.shiftKey){ panning=true; p0={x:e.clientX-view.x,y:e.clientY-view.y}; stage.setPointerCapture(e.pointerId);} });
-stage.addEventListener('pointermove', e=>{ if(!panning) return; view.x=e.clientX-p0.x; view.y=e.clientY-p0.y; img.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.z})`; draw(); });
-stage.addEventListener('pointerup', ()=>panning=false);
-
-function screenToImage(cx,cy){
-  const r=overlay.getBoundingClientRect();
-  const x=(cx-r.left-view.x)/view.z * (W/overlay.width);
-  const y=(cy-r.top -view.y)/view.z * (H/overlay.height);
-  return {ix:x, iy:y};
+  // scale back to full size
+  return tops.sort((a,b)=>a-b).map(y=>Math.round(y/r));
 }
-function imgX(px){ return (px-view.x)/view.z * (W/overlay.width); }
-
-/* ---------- Start ---------- */
-status('Upload a photo, align rows/edges/slots, then “Save layout”. Use “Copy row → all” to speed up.');
+function pickPeaks(series, need, minDist){
+  const idx=[...series].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const out=[];
+  for(const [,i] of idx){ if(out.every(j=>Math.abs(j-i)>minDist)) out.push(i); if(out.length>=need) break; }
+  return out.sort((a,b)=>a-b);
+}
+function dedupeByX(arr, minGap=12){
+  if(!arr.length) return arr;
+  const out=[arr[0]];
+  for(let i=1;i<arr.length;i++){
+    if(Math.abs(arr[i].x-out[out.length-1].x) >= minGap) out.push(arr[i]);
+  }
+  return out;
+}
 </script>
 </body>
 </html>
