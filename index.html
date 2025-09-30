@@ -3,71 +3,59 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Phone Box Attendance — Learnable Layout (12×5)</title>
+<title>Phone Box Attendance — Pro Editor (Rows • Edges • Slots)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-
 <script defer src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.3/dist/tesseract.min.js"></script>
-
 <style>
-  :root { --bg:#0b1020; --card:#121833; --muted:#8ea0d0; --accent:#3ad0ff; }
+  :root { --bg:#0b1020; --card:#121833; --muted:#8ea0d0; --accent:#31ccff; }
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;background:var(--bg);color:#fff}
-  header{padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:12px}
-  .badge{background:rgba(255,255,255,.1);padding:4px 8px;border-radius:999px;font-size:12px}
-  main{max-width:1100px;margin:0 auto;padding:12px}
-  .wrap{display:grid;grid-template-columns:1.05fr .95fr;gap:16px}
-  .card{background:var(--card);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  header{padding:14px 16px;border-bottom:1px solid #ffffff1a;display:flex;gap:12px;align-items:center}
+  .badge{background:#ffffff14;border:1px solid #ffffff1a;padding:4px 8px;border-radius:999px;font-size:12px}
+  main{max-width:1200px;margin:0 auto;padding:12px}
+  .wrap{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
+  .card{background:var(--card);border:1px solid #ffffff14;border-radius:16px;padding:16px;box-shadow:0 10px 30px #0008}
   h2{margin:0 0 12px;font-weight:800}
   label{display:block;margin:.5rem 0 .35rem;color:var(--muted);font-size:14px}
-  select,input[type="file"],button{width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:#0e1533;color:#fff}
+  select,input[type="file"],button{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #ffffff26;background:#0f1738;color:#fff}
   button.primary{background:linear-gradient(180deg,#39bdf2,#1aa1d9);border:none;font-weight:700}
   small{color:var(--muted)}
-  #stage{position:relative;width:100%;aspect-ratio:3/5;background:#0d1330;border-radius:12px;display:flex;align-items:center;justify-content:center;border:1px dashed rgba(255,255,255,.18);overflow:hidden}
-  #img{width:100%;height:100%;object-fit:cover;display:none}
-  #overlay{position:absolute;inset:0;touch-action:none}
+  #stage{position:relative;width:100%;aspect-ratio:3/5;background:#0b1333;border-radius:12px;border:1px dashed #ffffff2b;overflow:hidden;touch-action:none}
+  #img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;transform-origin:0 0}
+  #overlay{position:absolute;inset:0;pointer-events:none}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  .seg{display:flex;border:1px solid #ffffff2b;border-radius:10px;overflow:hidden}
+  .seg button{width:auto;border:0;background:#0f1738;padding:10px 12px}
+  .seg button.active{background:#1a2557}
+  .pill{display:inline-block;padding:.15rem .45rem;border-radius:999px;background:#ffffff22;font-size:12px}
   table{width:100%;border-collapse:collapse}
-  th,td{border-bottom:1px solid rgba(255,255,255,.08);padding:8px 6px;text-align:left}
-  tr.missing{background:rgba(255,80,80,.12)}
+  th,td{border-bottom:1px solid #ffffff14;padding:8px 6px;text-align:left}
+  tr.missing{background:#ff50501e}
   tr.ok{opacity:.75}
-  .pill{display:inline-block;padding:.15rem .45rem;border-radius:999px;background:rgba(255,255,255,.12);font-size:12px}
   .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:6px}
-  .slot{background:#0f1738;border:1px solid rgba(255,255,255,.08);aspect-ratio:3/5;border-radius:8px;position:relative}
-  .slot span{position:absolute;inset:auto 6px 6px 6px;font-size:10px;color:var(--muted)}
-  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  details summary{cursor:pointer}
-  details > div{background:#0f1738;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:10px}
-  @media (max-width: 820px) {
-    main{padding:8px}
-    .wrap{grid-template-columns:1fr;gap:12px}
-    button,select,input[type="file"]{padding:14px 16px;font-size:16px}
-    table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:nowrap;border-radius:12px}
-    th,td{padding:10px 8px}
-  }
+  .slot{background:#0f1738;border:1px solid #ffffff14;aspect-ratio:3/5;border-radius:8px;position:relative}
+  .slot span{position:absolute;inset:auto 6px 6px 6px;font-size:10px;color:#9bb0ff}
+  @media (max-width:900px){.wrap{grid-template-columns:1fr} button,select,input[type="file"]{padding:14px 16px;font-size:16px}}
 </style>
 </head>
 <body>
 <header>
   <div style="font-weight:800">📱 Phone Box Attendance</div>
-  <div class="badge">Auto rows + Learnable per-row columns</div>
+  <div class="badge">Pro Editor: Rows • Edges • Slots • Zoom/Pan • Save per box</div>
 </header>
 
 <main>
   <div class="wrap">
     <section class="card">
       <h2>Scan a Box</h2>
-
-      <div class="row">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div>
           <label>Choose box</label>
-          <select id="box">
-            <option value="">(no box)</option>
-            <optgroup label="Grade Boxes" id="gradeBoxes"></optgroup>
-            <optgroup label="Special"><option>SM1</option><option>SM2</option></optgroup>
-          </select>
+          <select id="box"><option value="">(no box)</option></select>
         </div>
         <div>
           <label>Roster CSV</label>
@@ -79,20 +67,22 @@
         </div>
       </div>
 
-      <div class="row" style="margin-top:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
         <div>
           <label>Take/Upload a photo</label>
           <input id="photo" type="file" accept="image/*" capture="environment" />
         </div>
         <div>
-          <label>Calibration</label>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button id="auto" class="primary">Auto-calibrate</button>
-            <label style="display:flex;align-items:center;gap:8px">
-              <input id="useLearned" type="checkbox" style="width:auto"> Use learned layout for this box
+          <label>Auto helpers</label>
+          <div class="toolbar">
+            <button id="autoRows" class="primary">Find rows</button>
+            <button id="ocrSlots">From OCR (numbers)</button>
+            <button id="equalRow">Equal 12 on row</button>
+            <label style="display:flex;align-items:center;gap:8px;margin-left:auto">
+              <input id="useSaved" type="checkbox" style="width:auto"> Use saved layout
             </label>
           </div>
-          <small>Cyan = blue strip tops; yellow ticks = per-row <b>L</b>/<b>R</b>. White lines = 13 learned boundaries per row.</small>
+          <small>Cyan lines = row tops. Yellow = per-row left/right. White = 13 boundaries (12 slots). “From OCR” reads the printed numbers to seed boundaries.</small>
         </div>
       </div>
 
@@ -101,33 +91,42 @@
         <canvas id="overlay"></canvas>
       </div>
 
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center">
-        <button id="analyze" class="primary">Analyze Attendance</button>
+      <div class="toolbar">
+        <div class="seg" id="modeSeg">
+          <button data-mode="rows" class="active">Rows</button>
+          <button data-mode="edges">Edges</button>
+          <button data-mode="slots">Slots</button>
+        </div>
 
-        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
-          <button id="teachLayoutBtn">Start Teach layout</button>
-          <button id="saveLayoutBtn">Save layout to this box</button>
-          <button id="clearLayoutBtn">Clear saved layout</button>
-          <button id="exportLayoutsBtn">Export layouts</button>
-          <label for="importLayouts" style="display:inline-flex;gap:8px;align-items:center">
+        <div class="seg" id="rowPicker"></div>
+
+        <div class="seg">
+          <button id="nudgeM5">◀︎◀︎</button>
+          <button id="nudgeM1">◀︎</button>
+          <button id="nudgeP1">▶︎</button>
+          <button id="nudgeP5">▶︎▶︎</button>
+        </div>
+
+        <div class="seg">
+          <button id="zoomOut">−</button>
+          <button id="zoomReset">100%</button>
+          <button id="zoomIn">+</button>
+        </div>
+
+        <label style="display:flex;align-items:center;gap:8px">
+          Opacity <input id="opacity" type="range" min="0.1" max="1" step="0.05" value="0.9" style="width:160px">
+        </label>
+
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button id="saveLayout">Save layout</button>
+          <button id="loadLayout">Load layout</button>
+          <button id="exportLayouts">Export</button>
+          <label style="display:inline-flex;gap:8px;align-items:center">
             <input id="importLayouts" type="file" accept="application/json" style="display:none">
-            <span style="border:1px solid rgba(255,255,255,.12);padding:12px 14px;border-radius:12px;cursor:pointer"
-              onclick="document.getElementById('importLayouts').click()">Import layouts</span>
+            <span style="border:1px solid #ffffff2b;padding:10px 12px;border-radius:10px;cursor:pointer" onclick="document.getElementById('importLayouts').click()">Import</span>
           </label>
         </div>
       </div>
-
-      <details style="margin-top:10px">
-        <summary>Advanced (tuning)</summary>
-        <div style="display:grid;gap:8px;margin-top:8px">
-          <label>Blue hue min (deg) <input id="hMin" type="range" min="170" max="210" step="1" value="190"></label>
-          <label>Blue hue max (deg) <input id="hMax" type="range" min="230" max="280" step="1" value="255"></label>
-          <label>Blue S min (0–1) <input id="sMin" type="range" min="0" max="1" step="0.01" value="0.35"></label>
-          <label>Blue V min (0–1) <input id="vMin" type="range" min="0" max="1" step="0.01" value="0.25"></label>
-          <label>Ignore X edges (% width) <input id="edge" type="range" min="0" max="12" step="1" value="4"></label>
-          <label>Detect height (% row gap) <input id="detPct" type="range" min="40" max="100" step="5" value="70"></label>
-        </div>
-      </details>
 
       <small id="status"></small>
     </section>
@@ -139,423 +138,347 @@
         <thead><tr><th>Slot</th><th>Expected</th><th>Status</th></tr></thead>
         <tbody id="results"></tbody>
       </table>
+      <div class="toolbar">
+        <button id="analyze" class="primary">Analyze Attendance</button>
+      </div>
     </section>
   </div>
 </main>
 
 <script>
-/* ---------- UI basics ---------- */
-const BOX_IDS=[]; ['9','10','11','12'].forEach(g=>['A','B','C','D','E','F'].forEach(l=>BOX_IDS.push(`${g}${l}`)));
-const gradeBoxes=document.getElementById('gradeBoxes'); BOX_IDS.forEach(id=>{const o=document.createElement('option');o.textContent=o.value=id;gradeBoxes.appendChild(o);});
-
-const photo=document.getElementById('photo'), img=document.getElementById('img');
+/* --------------------- Setup --------------------- */
+const boxSel=document.getElementById('box');
+const stage=document.getElementById('stage'), img=document.getElementById('img');
 const overlay=document.getElementById('overlay'), ctx=overlay.getContext('2d');
-
-const hMinEl=document.getElementById('hMin'), hMaxEl=document.getElementById('hMax');
-const sMinEl=document.getElementById('sMin'), vMinEl=document.getElementById('vMin');
-const edgeEl=document.getElementById('edge'), detPctEl=document.getElementById('detPct');
-const boxSel=document.getElementById('box'), useLearned=document.getElementById('useLearned');
-
-const statusEl=document.getElementById('status'), resultsBody=document.getElementById('results'), boxGrid=document.getElementById('boxGrid');
-
+const resultsBody=document.getElementById('results'), statusEl=document.getElementById('status');
 const rosterChoice=document.getElementById('rosterChoice'), rosterUpload=document.getElementById('rosterUpload');
-rosterChoice.addEventListener('change',()=>{ rosterUpload.style.display = rosterChoice.value==='upload'?'block':'none'; });
+const photo=document.getElementById('photo'), opacityEl=document.getElementById('opacity');
+const modeSeg=document.getElementById('modeSeg'), rowPicker=document.getElementById('rowPicker');
+const useSaved=document.getElementById('useSaved');
 
-/* ---------- Roster ---------- */
-let roster=[];
-async function loadRoster(){
+const hueMin=190, hueMax=255, sMin=0.35, vMin=0.25, edgePct=0.04;
+
+const BOX_IDS=[]; ['9','10','11','12'].forEach(g=>['A','B','C','D','E','F'].forEach(l=>BOX_IDS.push(`${g}${l}`)));
+boxSel.innerHTML += BOX_IDS.map(x=>`<option>${x}</option>`).join('');
+
+let roster=[], mode='rows', selRow=0, worker=null;
+let currentImg=null, W=0, H=0, view={z:1, x:0, y:0}; // zoom/pan
+let guides=null; // {rows:[y], LR:[[L,R]×5], bounds:[[13]×5]}
+let rois=[];
+
+/* --------------------- Roster --------------------- */
+rosterChoice.addEventListener('change',()=>{ rosterUpload.style.display = rosterChoice.value==='upload'?'block':'none'; });
+function loadRoster(){
   return new Promise((resolve)=>{
     if(rosterChoice.value==='upload'){
       if(!rosterUpload.files[0]) return resolve([]);
       Papa.parse(rosterUpload.files[0], {header:true, complete:r=>resolve(r.data)});
-    } else {
-      Papa.parse('./data/roster.csv', {download:true, header:true, complete:r=>resolve(r.data)});
-    }
+    } else Papa.parse('./data/roster.csv',{download:true,header:true,complete:r=>resolve(r.data)});
   });
 }
-function securityToBoxSlot(sec){
-  if(!sec) return null; const s=String(sec).replace(/\s+/g,'').toUpperCase();
-  const m=s.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/); if(!m) return null;
-  return {box:m[1], slot:parseInt(m[2],10)};
-}
-function rosterByBox(boxId){
-  const map={}; for(const row of roster){
-    const info=securityToBoxSlot(row['Security Number']||row['SecurityNumber']);
-    if(info && info.box===boxId) map[info.slot]=row['Full Name'];
-  } return map;
-}
-function drawGrid(namesBySlot={}){
-  boxGrid.innerHTML='';
-  for(let r=0;r<5;r++) for(let c=0;c<12;c++){
-    const idx=r*12+c+1;
-    const d=document.createElement('div'); d.className='slot';
-    const s=document.createElement('span'); s.textContent=namesBySlot[idx]||`#${idx}`;
-    d.appendChild(s); boxGrid.appendChild(d);
-  }
-}
+function byBox(id){const m={}; for(const r of roster){const s=(r['Security Number']||'').toUpperCase().replace(/\s+/g,'');const m2=s.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/); if(m2&&m2[1]===id)m[+m2[2]]=r['Full Name'];} return m;}
+function drawGrid(names={}){const boxGrid=document.getElementById('boxGrid'); boxGrid.innerHTML=''; for(let i=1;i<=60;i++){const d=document.createElement('div'); d.className='slot'; const s=document.createElement('span'); s.textContent=names[i]||`#${i}`; d.appendChild(s); boxGrid.appendChild(d);} }
 
-/* ---------- Image load ---------- */
-let currentImage=null;
+/* --------------------- Image load & canvas --------------------- */
 photo.addEventListener('change',()=>{
   const f=photo.files[0]; if(!f) return;
-  const url=URL.createObjectURL(f);
-  const tmp=new Image();
-  tmp.onload=()=>{
-    const scaled=toMaxSize(tmp,1600);
-    img.src = scaled.src; img.style.display='block';
-    currentImage = scaled;
-    resizeOverlay();
-    setTimeout(autoCalibrate, 60);
-  };
-  tmp.src=url;
+  const url=URL.createObjectURL(f); const im=new Image();
+  im.onload=()=>{ currentImg=im; img.src=url; img.style.display='block'; fitCanvas(); resetGuides(); draw(); };
+  im.src=url;
 });
-window.addEventListener('resize', resizeOverlay);
-function resizeOverlay(){ if(!currentImage) return; overlay.width=img.clientWidth; overlay.height=img.clientHeight; drawOverlay(); }
-
-/* ---------- Auto calibration (rows + per-row L/R + slots) ---------- */
-let guides=null;   // {tops: [yBig], LR: [[Lbig,Rbig]×5], boundsByRow: [[13]×5]}
-let rois=[];
-
-document.getElementById('auto').addEventListener('click', autoCalibrate);
-[hMinEl,hMaxEl,sMinEl,vMinEl,edgeEl,detPctEl,useLearned].forEach(el=>el.addEventListener('input', ()=>{ if(currentImage) autoCalibrate(); }));
-
-async function autoCalibrate(){
-  if(!currentImage) return alert('Upload a photo first.');
-  statusEl.textContent='Auto-calibrating…';
-
-  // 1) find blue bars (top edges)
-  const blue = await findBlueBars(downscale(currentImage, 1400), {
-    hueMin:parseInt(hMinEl.value,10), hueMax:parseInt(hMaxEl.value,10),
-    sMin:parseFloat(sMinEl.value), vMin:parseFloat(vMinEl.value),
-    edgeCrop:edgePct()
-  });
-  if(blue.tops.length!==5){ statusEl.textContent='Could not find 5 blue bars. Tweak sliders or retake the photo.'; drawOverlay(); return; }
-
-  // 2) for each row find L/R from blueness; then decide 13 bounds:
-  const small = downscale(currentImage, 1200);
-  const ctxS = small.getContext('2d'); const im = ctxS.getImageData(0,0,small.width,small.height);
-  const scaleX = small.width/currentImage.naturalWidth, scaleY = small.height/currentImage.naturalHeight;
-
-  const gaps=[]; for(let i=1;i<blue.tops.length;i++) gaps.push(blue.tops[i]-blue.tops[i-1]);
-  const avgGapBig = gaps.length? gaps.reduce((a,b)=>a+b,0)/gaps.length : currentImage.naturalHeight/5;
-
-  const bandHSmall = Math.max(6, Math.round((avgGapBig*0.22)*scaleY));
-  const boundsByRow=[]; const LR=[];
-  for(const topYbig of blue.tops){
-    const topSmall = Math.max(0, Math.round(topYbig*scaleY));
-    const colBlue = blueAmountByColumn(im, topSmall+1, Math.min(im.height-1, topSmall+bandHSmall),
-      parseInt(hMinEl.value,10), parseInt(hMaxEl.value,10), parseFloat(sMinEl.value), parseFloat(vMinEl.value));
-    const [L,R] = findLargestBlueRun(colBlue, Math.round(im.width*edgePct()));
-    LR.push([Math.round(L/scaleX), Math.round(R/scaleX)]);
-
-    let bounds;
-    const learned = getSavedLayout(boxSel.value);
-    if(useLearned.checked && learned){
-      const fracs = learned.fracsByRow[boundsByRow.length]; // 13 numbers in [0..1]
-      bounds = fracs.map(f => Math.round((L + f*(R-L))));   // apply learned fractions at small scale
-    } else {
-      bounds = equalBounds(L, R, 12);
-    }
-    boundsByRow.push(bounds.map(x=> Math.round(x/scaleX)));
-  }
-
-  // 3) build ROIs directly above the blue bars
-  const detectH = Math.max(10, Math.round(avgGapBig * (parseInt(detPctEl.value,10)/100)));
-  const roisOut=[];
-  for(let r=0;r<5;r++){
-    const yBottom = Math.max(0, blue.tops[r]);
-    const yTop = Math.max(0, yBottom - detectH);
-    const b = boundsByRow[r];
-    for(let c=0;c<12;c++){
-      const x0=b[c], x1=b[c+1];
-      const inset = Math.round((x1-x0)*0.10); // keep away from walls
-      roisOut.push({
-        x:(x0+inset)/currentImage.naturalWidth,
-        y:yTop/currentImage.naturalHeight,
-        w:(x1-x0-2*inset)/currentImage.naturalWidth,
-        h:(yBottom-yTop)/currentImage.naturalHeight
-      });
-    }
-  }
-  guides={tops:blue.tops, LR, boundsByRow};
-  rois=roisOut;
-  statusEl.textContent = getSavedLayout(boxSel.value)&&useLearned.checked ? 'Calibrated with learned layout.' : 'Calibrated.';
-  drawOverlay();
+window.addEventListener('resize', fitCanvas);
+function fitCanvas(){
+  if(!currentImg) return;
+  const r=stage.getBoundingClientRect(); overlay.width=r.width; overlay.height=r.height;
+  // natural size basis
+  W=currentImg.naturalWidth; H=currentImg.naturalHeight;
+  img.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.z})`;
+  draw();
 }
 
-/* ---------- Teach layout (drag 13 boundaries/row once, then save) ---------- */
-const teachBtn=document.getElementById('teachLayoutBtn');
-const saveBtn=document.getElementById('saveLayoutBtn');
-const clearBtn=document.getElementById('clearLayoutBtn');
-const exportBtn=document.getElementById('exportLayoutsBtn');
-const importEl=document.getElementById('importLayouts');
+/* --------------------- Guides model --------------------- */
+function resetGuides(){
+  // evenly spaced estimate
+  guides={
+    rows:[0.20,0.38,0.56,0.74,0.92].map(v=>Math.round(v*H)),
+    LR:[[0.06*W,0.94*W],[0.06*W,0.94*W],[0.06*W,0.94*W],[0.06*W,0.94*W],[0.06*W,0.94*W]],
+    bounds:Array.from({length:5},()=>equalBoundsPx(0.06*W,0.94*W,12))
+  };
+  computeROIs();
+  buildRowPicker();
+}
+function equalBoundsPx(L,R,n){const s=(R-L)/n, b=[Math.round(L)]; for(let i=1;i<n;i++) b.push(Math.round(L+i*s)); b.push(Math.round(R)); return b;}
+function computeROIs(){
+  rois=[];
+  const gaps=[]; for(let i=1;i<guides.rows.length;i++) gaps.push(guides.rows[i]-guides.rows[i-1]);
+  const h=Math.max(12, Math.round((gaps.reduce((a,b)=>a+b,0)/gaps.length||H/5)*0.70));
+  for(let r=0;r<5;r++){
+    const yB=guides.rows[r], yT=Math.max(0,yB-h);
+    const b=guides.bounds[r];
+    for(let c=0;c<12;c++){
+      const x0=b[c], x1=b[c+1]; const inset=Math.round((x1-x0)*0.10);
+      rois.push({x:x0+inset, y:yT, w:x1-x0-2*inset, h:yB-yT, row:r, col:c});
+    }
+  }
+}
 
-let layoutTeach=false;   // when true, you can drag boundaries
-let dragTarget=null;     // {row, idx} idx in 0..12
-
-teachBtn.addEventListener('click',()=>{
-  if(!guides || !guides.boundsByRow){ alert('Auto-calibrate first.'); return; }
-  layoutTeach=!layoutTeach;
-  overlay.style.cursor = layoutTeach ? 'ew-resize' : 'default';
-  teachBtn.textContent = layoutTeach ? 'Stop Teach layout' : 'Start Teach layout';
-  drawOverlay();
-});
-saveBtn.addEventListener('click',()=>{
-  if(!boxSel.value) return alert('Choose a box first.');
-  if(!guides || !guides.boundsByRow) return alert('Calibrate first, then teach.');
-  // convert absolute bounds to fractions per row: f = (x - L)/(R-L)
-  const fracsByRow = guides.boundsByRow.map((bounds, r)=>{
-    const L = guides.LR[r][0], R = guides.LR[r][1];
-    return bounds.map(x => (x - L) / Math.max(1, (R-L)));
+/* --------------------- Auto helpers --------------------- */
+document.getElementById('autoRows').onclick=async()=>{
+  if(!currentImg) return alert('Add a photo first.');
+  const ds=downscale(currentImg, 1400);
+  const tops=findBlueBars(ds,{hueMin,hueMax,sMin,vMin,edge:edgePct});
+  if(tops.length===5) guides.rows=tops.map(y=>Math.round(y*(H/ds.height)));
+  else return status('Could not find 5 blue bars. Try a straighter photo.');
+  // L/R by blueness near each row
+  const small=downscale(currentImg, 1200), ctxS=small.getContext('2d'), im=ctxS.getImageData(0,0,small.width,small.height);
+  const scaleX=W/small.width, scaleY=H/small.height;
+  const bandH=Math.round((avgGap(guides.rows)*0.22)*small.height/H);
+  guides.LR = guides.rows.map(yBig=>{
+    const ySm=Math.round(yBig/scaleY);
+    const col = blueByColumn(im, ySm+1, Math.min(small.height-1,ySm+bandH));
+    const [L,R] = blueRun(col, Math.round(small.width*edgePct));
+    return [Math.round(L*scaleX), Math.round(R*scaleX)];
   });
-  const pack={ fracsByRow };
-  saveLayout(boxSel.value, pack);
-  alert('Saved learned layout for '+boxSel.value);
-});
-clearBtn.addEventListener('click',()=>{
+  // set equal bounds initially
+  guides.bounds = guides.LR.map(([L,R])=>equalBoundsPx(L,R,12));
+  computeROIs(); draw(); status('Rows + edges detected.');
+};
+
+document.getElementById('ocrSlots').onclick=async()=>{
+  if(!currentImg) return alert('Add a photo first.');
+  if(!worker) worker = await Tesseract.createWorker('eng',1,{corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.3/tesseract-core.wasm.js',workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@5.0.3/dist/worker.min.js'});
+  // for each row: crop band and OCR digits to place 13 bounds
+  const small=downscale(currentImg, 1200), scaleX=W/small.width, scaleY=H/small.height;
+  const ctxS=small.getContext('2d');
+  const g=guides.rows; const bandH=Math.round((avgGap(g)*0.30)*small.height/H);
+  for(let r=0;r<5;r++){
+    const ySm=Math.round(g[r]/scaleY), y0=Math.max(0,ySm-4), y1=Math.min(small.height-1,ySm+bandH);
+    const crop=docrop(small,0,y0,small.width,y1-y0+1);
+    const data=(await worker.recognize(crop,{tessedit_char_whitelist:'0123456789',tessedit_pageseg_mode:'7'})).data;
+    let nums=data.words.map(w=>({t:w.text.replace(/\D/g,''), L:w.bbox.x0, R:w.bbox.x1, x:(w.bbox.x0+w.bbox.x1)/2}))
+                      .filter(o=>o.t.length>0).sort((a,b)=>a.x-b.x);
+    nums=dedupe(nums,10);
+    let bounds;
+    if(nums.length>=8){
+      bounds=boundsFromCenters(nums.map(o=>o.x), 12, 0, small.width-1);
+    } else {
+      // fallback to equal between L/R (make sure L/R exist)
+      if(!guides.LR[r]) guides.LR[r]=[Math.round(0.06*W),Math.round(0.94*W)];
+      const [Lr,Rr]=guides.LR[r].map(v=>Math.round(v/scaleX));
+      bounds=equalBoundsPx(Lr,Rr,12).map(x=>x); // small scale
+    }
+    guides.bounds[r]=bounds.map(x=>Math.round(x*scaleX));
+    // set L/R from bounds extremes
+    guides.LR[r]=[guides.bounds[r][0], guides.bounds[r][guides.bounds[r].length-1]];
+  }
+  computeROIs(); draw(); status('Slots seeded from OCR numbers. Fine-tune in “Slots” mode.');
+};
+
+document.getElementById('equalRow').onclick=()=>{
+  if(!currentImg||!guides) return;
+  const [L,R]=guides.LR[selRow]||[Math.round(0.06*W),Math.round(0.94*W)];
+  guides.bounds[selRow]=equalBoundsPx(L,R,12);
+  computeROIs(); draw();
+};
+
+/* --------------------- Save / Load layouts --------------------- */
+document.getElementById('saveLayout').onclick=()=>{
+  if(!boxSel.value||!guides) return alert('Choose a box and calibrate.');
+  // save as fractions per row relative to L/R
+  const pack={ fracs: guides.bounds.map((b,r)=>{ const [L,R]=guides.LR[r]; return b.map(x=> (x-L)/Math.max(1,(R-L))); }),
+               rows: guides.rows.map(y=>y/H) };
+  localStorage.setItem('pbx_layout_'+boxSel.value, JSON.stringify(pack));
+  status('Layout saved for '+boxSel.value);
+};
+document.getElementById('loadLayout').onclick=()=>{
   if(!boxSel.value) return alert('Choose a box first.');
-  localStorage.removeItem('pbx_layout_'+boxSel.value);
-  alert('Cleared layout for '+boxSel.value);
+  const s=localStorage.getItem('pbx_layout_'+boxSel.value); if(!s) return status('No saved layout for '+boxSel.value);
+  const pack=JSON.parse(s);
+  // if rows already detected, keep them; otherwise restore from saved fractions of H
+  if(!guides) resetGuides();
+  guides.rows = pack.rows.map(v=>Math.round(v*H));
+  // need L/R first; if not present, use full width
+  for(let r=0;r<5;r++){
+    if(!guides.LR[r]) guides.LR[r]=[Math.round(0.06*W),Math.round(0.94*W)];
+    const [L,R]=guides.LR[r];
+    guides.bounds[r]=pack.fracs[r].map(f=>Math.round(L+f*(R-L)));
+  }
+  computeROIs(); draw(); status('Layout loaded.');
+};
+document.getElementById('exportLayouts').onclick=()=>{
+  const all={};
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i); if(k.startsWith('pbx_layout_')) all[k.replace('pbx_layout_','')]=JSON.parse(localStorage.getItem(k));
+  }
+  const blob=new Blob([JSON.stringify(all)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='phonebox_layouts.json'; a.click();
+};
+document.getElementById('importLayouts').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ const obj=JSON.parse(r.result); for(const [k,v] of Object.entries(obj)) localStorage.setItem('pbx_layout_'+k,JSON.stringify(v)); status('Layouts imported.'); }; r.readAsText(f);
 });
-exportBtn.addEventListener('click',()=>{
-  const all = exportAllLayouts();
-  const blob = new Blob([JSON.stringify(all)], {type:'application/json'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='phonebox_layouts.json'; a.click();
-});
-importEl.addEventListener('change',()=>{
-  const f=importEl.files[0]; if(!f) return;
-  const r=new FileReader();
-  r.onload=()=>{ importAllLayouts(JSON.parse(r.result)); alert('Layouts imported.'); };
-  r.readAsText(f);
-});
+useSaved.addEventListener('change',()=>{ if(useSaved.checked) document.getElementById('loadLayout').click(); });
 
-// overlay interactions for dragging 13 boundaries per row
-overlay.addEventListener('pointerdown', (e)=>{
-  if(!layoutTeach || !guides) return;
-  const rect=overlay.getBoundingClientRect();
-  const xPx=e.clientX-rect.left, yPx=e.clientY-rect.top;
-
-  // find nearest row by distance to cyan top line
-  const scaleY=overlay.height/currentImage.naturalHeight;
-  let row=0, best=1e9;
-  guides.tops.forEach((y,i)=>{ const d=Math.abs(y*scaleY - yPx); if(d<best){best=d; row=i;} });
-  if(best>overlay.height*0.08) return; // clicked far away
-
-  // find nearest boundary line in that row
-  const scaleX=overlay.width/currentImage.naturalWidth;
-  const bounds=guides.boundsByRow[row];
-  let idx=0, bestX=1e9;
-  bounds.forEach((bx,i)=>{ const dx=Math.abs(bx*scaleX - xPx); if(dx<bestX){bestX=dx; idx=i;} });
-  if(bestX>14) return;
-  dragTarget={row, idx, offset:(bounds[idx]*scaleX - xPx)};
-});
-overlay.addEventListener('pointermove', (e)=>{
-  if(!dragTarget) return;
-  const rect=overlay.getBoundingClientRect();
-  const x=(e.clientX-rect.left) + dragTarget.offset;
-  const scaleX=currentImage.naturalWidth/overlay.width;
-  const row=dragTarget.row, idx=dragTarget.idx;
-  const b=guides.boundsByRow[row]; const L=guides.LR[row][0], R=guides.LR[row][1];
-  let newX=Math.round(x*scaleX);
-  // keep within [L..R] and ordered
-  const min = (idx===0) ? L : b[idx-1]+4;
-  const max = (idx===b.length-1) ? R : b[idx+1]-4;
-  newX=Math.max(min, Math.min(max, newX));
-  b[idx]=newX;
-  drawOverlay();
-});
-window.addEventListener('pointerup', ()=>dragTarget=null);
-
-/* ---------- Analyze (presence only) ---------- */
-document.getElementById('analyze').addEventListener('click', analyze);
-async function analyze(){
+/* --------------------- Analyze --------------------- */
+document.getElementById('analyze').onclick=async ()=>{
   if(!rois.length) return alert('Calibrate first.');
-  const names=boxSel.value ? rosterByBox(boxSel.value) : {};
-  drawGrid(names);
-  const rec=[];
+  roster=await loadRoster(); drawGrid(byBox(boxSel.value));
+  const names=byBox(boxSel.value), rows=[];
   for(let i=0;i<rois.length;i++){
-    const slot=i+1; const expected=names[slot]||'';
-    const occ = slotOccupied(cropROI(currentImage, rois[i]));
+    const slot=i+1, expected=names[slot]||'';
+    const occ = isOccupied(cropROI(rois[i]));
     const status = occ ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
-    rec.push({slot, expected, status});
+    rows.push({slot, expected, status});
   }
   resultsBody.innerHTML='';
-  for(const r of rec){
-    const tr=document.createElement('tr');
-    tr.className = r.status==='missing' ? 'missing' : (r.status==='present' ? 'ok' : '');
+  rows.forEach(r=>{
+    const tr=document.createElement('tr'); tr.className = r.status==='missing'?'missing':(r.status==='present'?'ok':'');
     tr.innerHTML=`<td>${r.slot}</td><td>${r.expected||''}</td><td><span class="pill">${r.status}</span></td>`;
     resultsBody.appendChild(tr);
+  });
+};
+
+/* --------------------- Editor interactions --------------------- */
+modeSeg.addEventListener('click',e=>{
+  if(e.target.tagName!=='BUTTON') return;
+  [...modeSeg.children].forEach(b=>b.classList.remove('active')); e.target.classList.add('active'); mode=e.target.dataset.mode; draw();
+});
+function buildRowPicker(){
+  rowPicker.innerHTML=''; for(let i=0;i<5;i++){ const b=document.createElement('button'); b.textContent='Row '+(i+1); if(i===selRow)b.classList.add('active'); b.onclick=()=>{ selRow=i; buildRowPicker(); draw(); }; rowPicker.appendChild(b); }
+}
+['nudgeM5','nudgeM1','nudgeP1','nudgeP5'].forEach(id=>document.getElementById(id).onclick=()=>nudge(id));
+function nudge(id){
+  const d = id==='nudgeM5'?-5:id==='nudgeM1'?-1:id==='nudgeP1'?1:5;
+  if(mode==='rows'){ guides.rows[selRow]=clamp(guides.rows[selRow]+d, 0, H-2); }
+  else if(mode==='edges'){ const [L,R]=guides.LR[selRow]; guides.LR[selRow]=[clamp(L+d,0,W-10),clamp(R+d,10,W)]; guides.bounds[selRow]=shiftArray(guides.bounds[selRow],d,0,W); }
+  else { // slots
+    const b=guides.bounds[selRow]; // move nearest boundary to view center
+    let idx=nearestIdx(b, viewToImageX(overlay.width/2));
+    b[idx]=clamp(b[idx]+d, idx?b[idx-1]+2:0, idx<b.length-1?b[idx+1]-2:W);
   }
-  statusEl.textContent='Done.';
+  computeROIs(); draw();
+}
+function nearestIdx(arr,x){ let best=0, d=1e9; arr.forEach((v,i)=>{const dd=Math.abs(v-x); if(dd<d){d=dd; best=i;}}); return best; }
+function shiftArray(b,d,min,max){const out=b.map(v=>clamp(v+d,min,max)); return out;}
+function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
+
+opacityEl.addEventListener('input', draw);
+
+/* zoom/pan */
+document.getElementById('zoomIn').onclick=()=>{ view.z=Math.min(4,view.z*1.25); draw(); };
+document.getElementById('zoomOut').onclick=()=>{ view.z=Math.max(0.5,view.z/1.25); draw(); };
+document.getElementById('zoomReset').onclick=()=>{ view={z:1,x:0,y:0}; img.style.transform=`translate(0px,0px) scale(1)`; draw(); };
+
+let panning=false, panStart=null;
+stage.addEventListener('pointerdown',e=>{ panning=true; panStart={x:e.clientX-view.x, y:e.clientY-view.y}; stage.setPointerCapture(e.pointerId); });
+stage.addEventListener('pointermove',e=>{ if(!panning) return; view.x=e.clientX-panStart.x; view.y=e.clientY-panStart.y; img.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.z})`; draw(); });
+stage.addEventListener('pointerup',()=>{ panning=false; });
+
+/* drag edit on overlay */
+stage.addEventListener('pointerdown', onDown);
+function onDown(e){
+  const {x,y}=toImageXY(e.clientX,e.clientY);
+  let hit=null;
+  if(mode==='rows'){
+    // nearest row
+    let best=1e9, idx=0;
+    guides.rows.forEach((yy,i)=>{const d=Math.abs(yy-y); if(d<best){best=d; idx=i;}});
+    hit={type:'row',i:idx,dy:guides.rows[idx]-y};
+  } else if(mode==='edges'){
+    // nearest L/R on selected row
+    const [L,R]=guides.LR[selRow]; const dL=Math.abs(L-x), dR=Math.abs(R-x);
+    hit={type:dL<dR?'L':'R', row:selRow, dx:(dL<dR?L:R)-x};
+  } else {
+    // nearest boundary on selected row
+    const b=guides.bounds[selRow]; let best=1e9, i=0; b.forEach((bx,bi)=>{const d=Math.abs(bx-x); if(d<best){best=d;i=bi;}}); hit={type:'B', row:selRow, idx:i, dx:b[i]-x};
+  }
+  const id=e.pointerId; stage.setPointerCapture(id);
+  stage.onpointermove=ev=>{
+    const p=toImageXY(ev.clientX,ev.clientY);
+    if(hit.type==='row'){
+      guides.rows[hit.i]=clamp(p.y+hit.dy, hit.i?guides.rows[hit.i-1]+10:0, hit.i<4?guides.rows[hit.i+1]-10:H-2);
+      computeROIs(); draw();
+    } else if(hit.type==='L' || hit.type==='R'){
+      const r=hit.row; const L=guides.LR[r][0], R=guides.LR[r][1];
+      let nx=clamp(p.x+hit.dx, 0, W);
+      if(hit.type==='L'){ nx=Math.min(nx,R-20); guides.LR[r][0]=nx; }
+      else { nx=Math.max(nx,L+20); guides.LR[r][1]=nx; }
+      // adjust bounds by anchoring fractions
+      const fr=guides.bounds[r].map(x=> (x-L)/Math.max(1,(R-L)));
+      guides.bounds[r]=fr.map(f=>Math.round(guides.LR[r][0]+f*(guides.LR[r][1]-guides.LR[r][0])));
+      computeROIs(); draw();
+    } else if(hit.type==='B'){
+      const r=hit.row, i=hit.idx, b=guides.bounds[r];
+      let nx=clamp(p.x+hit.dx, i?b[i-1]+2:0, i<b.length-1?b[i+1]-2:W);
+      b[i]=nx; computeROIs(); draw();
+    }
+  };
+  stage.onpointerup=()=>{ stage.onpointermove=null; stage.onpointerup=null; };
 }
 
-/* ---------- Drawing ---------- */
-function drawOverlay(){
+/* --------------------- Drawing --------------------- */
+function draw(){
+  if(!currentImg||!guides){ ctx.clearRect(0,0,overlay.width,overlay.height); return; }
+  const sx=overlay.width/W*view.z, sy=overlay.height/H*view.z;
+  overlay.style.opacity=opacityEl.value;
+
   ctx.clearRect(0,0,overlay.width,overlay.height);
-  if(!currentImage || !guides) return;
-  const sx=overlay.width/currentImage.naturalWidth;
-  const sy=overlay.height/currentImage.naturalHeight;
+  ctx.save(); ctx.translate(view.x,view.y); ctx.scale(view.z,view.z);
 
-  // cyan row tops
-  ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent')||'#3ad0ff';
-  ctx.lineWidth=2;
-  guides.tops.forEach(y=>{
-    const yy=y*sy; ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(overlay.width,yy); ctx.stroke();
+  // dim other rows when editing slots/edges
+  if(mode!=='rows'){
+    ctx.fillStyle='rgba(0,0,0,0.25)';
+    guides.rows.forEach((y,i)=>{ if(i!==selRow){ ctx.fillRect(0, y-120, W, 240); } });
+  }
+
+  // cyan row lines
+  ctx.strokeStyle='var(--accent)'; ctx.lineWidth=2/ view.z;
+  guides.rows.forEach((y,i)=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
+
+  // yellow L/R
+  ctx.strokeStyle='#ffd84a'; ctx.lineWidth=1.5/ view.z;
+  guides.LR.forEach(([L,R],i)=>{ const y=guides.rows[i]; const h=80;
+    ctx.beginPath(); ctx.moveTo(L,y-h); ctx.lineTo(L,y+h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(R,y-h); ctx.lineTo(R,y+h); ctx.stroke();
   });
 
-  // yellow L/R ticks
-  ctx.strokeStyle='#ffd63a'; ctx.lineWidth=1.25;
-  guides.LR.forEach(([L,R],i)=>{
-    const yy=guides.tops[i]*sy, h=Math.max(10,overlay.height*0.04);
-    ctx.beginPath(); ctx.moveTo(L*sx, yy-h); ctx.lineTo(L*sx, yy+h); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(R*sx, yy-h); ctx.lineTo(R*sx, yy+h); ctx.stroke();
-  });
+  // white boundaries
+  ctx.strokeStyle='#fff'; ctx.lineWidth=(mode==='slots'?3:1.8)/ view.z;
+  guides.bounds.forEach((b,i)=>{ const y=guides.rows[i], h=90; b.forEach(x=>{ ctx.beginPath(); ctx.moveTo(x,y-h); ctx.lineTo(x,y+h); ctx.stroke(); }); });
 
-  // white 13 boundaries per row
-  ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth= layoutTeach ? 3 : 1.75;
-  guides.boundsByRow.forEach((bounds,i)=>{
-    const yy=guides.tops[i]*sy, h=Math.max(10,overlay.height*0.06);
-    bounds.forEach((bx,idx)=>{
-      const xx=bx*sx;
-      ctx.beginPath(); ctx.moveTo(xx, yy-h); ctx.lineTo(xx, yy+h); ctx.stroke();
-    });
-  });
+  // slot rectangles
+  ctx.strokeStyle='#ffffffea'; ctx.lineWidth=2/ view.z;
+  for(const r of rois){ ctx.strokeRect(r.x, r.y, r.w, r.h); }
 
-  // draw rectangles (derived from current bounds)
-  if(rois.length){
-    ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth=2;
-    rois.forEach(r=>{
-      ctx.strokeRect(r.x*overlay.width, r.y*overlay.height, r.w*overlay.width, r.h*overlay.height);
-    });
-  }
+  ctx.restore();
 }
 
-/* ---------- Learn/Save layout store ---------- */
-function saveLayout(boxId, pack){
-  localStorage.setItem('pbx_layout_'+boxId, JSON.stringify(pack));
-}
-function getSavedLayout(boxId){
-  if(!boxId) return null;
-  const raw=localStorage.getItem('pbx_layout_'+boxId);
-  if(!raw) return null; try{ return JSON.parse(raw); }catch{return null;}
-}
-function exportAllLayouts(){
-  const out={};
-  for(let i=0;i<localStorage.length;i++){
-    const k=localStorage.key(i);
-    if(k && k.startsWith('pbx_layout_')) out[k.replace('pbx_layout_','')]=JSON.parse(localStorage.getItem(k));
-  }
-  return out;
-}
-function importAllLayouts(obj){
-  for(const [boxId,pack] of Object.entries(obj)){
-    localStorage.setItem('pbx_layout_'+boxId, JSON.stringify(pack));
-  }
-}
+/* --------------------- Blue bars & OCR helpers --------------------- */
+function downscale(img, maxW=1200){ const r=Math.min(1,maxW/img.naturalWidth); const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r); c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c; }
+function rgb2hsv(r,g,b){r/=255;g/=255;b/=255;const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;let h=0;if(d!==0){if(max===r)h=((g-b)/d)%6;else if(max===g)h=(b-r)/d+2;else h=(r-g)/d+4;h*=60;if(h<0)h+=360;}const s=max===0?0:d/max,v=max;return{h,s,v};}
+function findBlueBars(canvas,{hueMin,hueMax,sMin,vMin,edge}){const cx=canvas.getContext('2d'),{width:W,height:H}=canvas;const {data}=cx.getImageData(0,0,W,H);const x0=Math.round(W*edge), x1=Math.round(W*(1-edge));const frac=new Float32Array(H);for(let y=0;y<H;y++){let cnt=0,blue=0;for(let x=x0;x<=x1;x+=2){const i=(y*W+x)*4;const {h,s,v}=rgb2hsv(data[i],data[i+1],data[i+2]);if((h>hueMin&&h<hueMax)&&s>=sMin&&v>=vMin)blue++;cnt++;}frac[y]=cnt?blue/cnt:0;} // smooth & pick 5 peaks
+  const s=smooth(frac,6), idx=topPeaks(s,5,Math.round(H/8)); const tops=[]; const win=Math.round(H*0.035); for(const p of idx){const a=Math.max(0,p-win), b=Math.min(H-1,p+win); let M=0; for(let y=a;y<=b;y++) M=Math.max(M,s[y]); const T=M*0.5; let top=p; for(let y=p;y>=a;y--){if(s[y]>=T) top=y; else break;} tops.push(top); } return tops.sort((a,b)=>a-b);}
+function smooth(arr,w){const o=new Float32Array(arr.length); for(let i=0;i<arr.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=arr.length) continue; s+=arr[j]; c++;} o[i]=s/c;} return o;}
+function topPeaks(s,count,minDist){const idx=[...s].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const out=[]; for(const [,i] of idx){ if(out.every(j=>Math.abs(j-i)>minDist)) out.push(i); if(out.length>=count) break; } return out.sort((a,b)=>a-b);}
+function avgGap(a){const g=[]; for(let i=1;i<a.length;i++) g.push(a[i]-a[i-1]); return g.reduce((x,y)=>x+y,0)/g.length;}
+function blueByColumn(im, y0,y1){const {data,width:W}=im; const col=new Float32Array(W).fill(0); for(let x=0;x<W;x++){let s=0; for(let y=y0;y<=y1;y++){const i=(y*W+x)*4; const {h,s:S,v}=rgb2hsv(data[i],data[i+1],data[i+2]); if((h>hueMin&&h<hueMax)&&S>=sMin&&v>=vMin) s++;} col[x]=s;} return smooth(col,6);}
+function blueRun(col,pad){const W=col.length,L=pad,R=W-pad-1;const thr=q(col.slice(L,R+1),0.55); const m=new Uint8Array(W); for(let x=L;x<=R;x++) m[x]=col[x]>=thr?1:0; // widest run
+  let best=[L,R],w=0,run=false,s=L; for(let x=L;x<=R;x++){if(m[x]&&!run){run=true;s=x;} if((!m[x]||x===R)&&run){const e=(!m[x]&&x>L)?x-1:x; const ww=e-s; if(ww>w){w=ww; best=[s,e];} run=false;}} return best;}
+function q(a,p){const b=[...a].sort((x,y)=>x-y); const i=Math.max(0,Math.min(b.length-1,Math.floor(p*(b.length-1)))); return b[i];}
+function docrop(src,x,y,w,h){const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(src,x,y,w,h,0,0,w,h); return c;}
+function dedupe(nums,px){if(!nums.length) return nums; const out=[nums[0]]; for(let i=1;i<nums.length;i++){ if(Math.abs(nums[i].x-out[out.length-1].x)>px) out.push(nums[i]); } return out;}
+function boundsFromCenters(cx,target,L,R){while(cx.length>target){let bi=0, best=1e9; for(let i=0;i<cx.length-1;i++){const g=cx[i+1]-cx[i]; if(g<best){best=g;bi=i;}} cx.splice(bi,2,(cx[bi]+cx[bi+1])/2);} while(cx.length<target){let bi=0,best=-1; for(let i=0;i<cx.length-1;i++){const g=cx[i+1]-cx[i]; if(g>best){best=g;bi=i;}} cx.splice(bi+1,0,(cx[bi]+cx[bi+1])/2);} const b=[Math.round(cx[0]-(cx[1]-cx[0])/2)]; for(let i=0;i<cx.length-1;i++) b.push(Math.round((cx[i]+cx[i+1])/2)); b.push(Math.round(cx[cx.length-1]+(cx[cx.length-1]-cx[cx.length-2])/2)); b[0]=Math.max(b[0],L); b[b.length-1]=Math.min(b[b.length-1],R); return b;}
 
-/* ---------- Low-level helpers ---------- */
-function toMaxSize(img, maxW=1600){
-  const r=Math.min(1, maxW/img.naturalWidth);
-  if(r===1) return img;
-  const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r);
-  c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-  const out=new Image(); out.src=c.toDataURL('image/jpeg',0.92); return out;
-}
-function edgePct(){ return (parseInt(edgeEl.value,10))/100; }
-function downscale(img, maxW=900){ const r=Math.min(1,maxW/img.naturalWidth); const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r); c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c; }
-function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
-function smooth1D(arr, w=5){ const out=new Float32Array(arr.length); for(let i=0;i<arr.length;i++){ let s=0,c=0; for(let k=-w;k<=w;k++){ const j=i+k; if(j<0||j>=arr.length) continue; s+=arr[j]; c++; } out[i]=s/c; } return out; }
+/* --------------------- ROI + presence --------------------- */
+function cropROI(r){const c=document.createElement('canvas'); c.width=r.w; c.height=r.h; const ctx2=c.getContext('2d'); ctx2.drawImage(currentImg, r.x,r.y,r.w,r.h, 0,0,r.w,r.h); return c;}
+function isOccupied(c){const ctx2=c.getContext('2d'); const cx=Math.round(c.width*0.20), cw=Math.round(c.width*0.60), cy=Math.round(c.height*0.15), ch=Math.round(c.height*0.60); const {data}=ctx2.getImageData(cx,cy,cw,ch); const cols=new Float32Array(cw).fill(0); for(let y=0;y<ch;y++){for(let x=0;x<cw;x++){const i=(y*cw+x)*4; const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; if(L<130) cols[x]++;}} for(let x=0;x<cw;x++) cols[x]/=ch; let best=0,run=0; for(let x=0;x<cw;x++){ if(cols[x]>0.5){run++; best=Math.max(best,run);} else run=0;} return best>=Math.round(cw*0.25);}
 
-async function findBlueBars(canvas,{hueMin,hueMax,sMin,vMin,edgeCrop}){
-  const cx=canvas.getContext('2d');
-  const W=canvas.width, H=canvas.height;
-  const {data}=cx.getImageData(0,0,W,H);
-  const x0=Math.round(W*edgeCrop), x1=Math.round(W*(1-edgeCrop));
-  const frac=new Float32Array(H);
-  for(let y=0;y<H;y++){
-    let cnt=0, blue=0;
-    for(let x=x0;x<=x1;x+=2){
-      const i=(y*W+x)*4; const {h,s,v}=rgb2hsv(data[i],data[i+1],data[i+2]);
-      if((h>hueMin&&h<hueMax)&&s>=sMin&&v>=vMin) blue++; cnt++;
-    }
-    frac[y]=cnt?blue/cnt:0;
-  }
-  let s = smooth1D(frac,6);
-  let peaks = pickPeaks(s,5,Math.round(H/8));
-  if(peaks.length<5){
-    for(let y=0;y<H;y++){
-      let cnt=0, blue=0;
-      for(let x=x0;x<=x1;x++){
-        const i=(y*W+x)*4; const {h,s,v}=rgb2hsv(data[i],data[i+1],data[i+2]);
-        const ok=(h>hueMin-5&&h<hueMax+5)&&s>=Math.max(0.2,sMin-0.1)&&v>=Math.max(0.18,vMin-0.07);
-        if(ok) blue++; cnt++;
-      }
-      frac[y]=cnt?blue/cnt:0;
-    }
-    s=smooth1D(frac,8); peaks=pickPeaks(s,5,Math.round(H/9));
-  }
-  // TOP edges using 50% local max
-  const tops=[]; const win=Math.round(H*0.035);
-  for(const p of peaks){
-    const a=Math.max(0,p-win), b=Math.min(H-1,p+win);
-    let M=0; for(let y=a;y<=b;y++) M=Math.max(M,s[y]); const T=M*0.5;
-    let top=p; for(let y=p;y>=a;y--){ if(s[y]>=T) top=y; else break; }
-    tops.push(top);
-  }
-  return {tops:tops.sort((a,b)=>a-b)};
-}
-function pickPeaks(series,count,minDist){
-  const idx=[...series].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const sel=[];
-  for(const [,i] of idx){ if(sel.every(j=>Math.abs(j-i)>minDist)) sel.push(i); if(sel.length>=count) break; }
-  return sel.sort((a,b)=>a-b);
-}
+/* --------------------- Utils --------------------- */
+function status(t){ statusEl.textContent=t; }
+function toImageXY(cx,cy){ const rect=overlay.getBoundingClientRect(); const x=(cx-rect.left-view.x)/view.z * (W/overlay.width); const y=(cy-rect.top -view.y)/view.z * (H/overlay.height); return {x:x*(overlay.width/W), y:y*(overlay.height/H)} /* not used */ }
+function viewToImageX(x){ const rect=overlay.getBoundingClientRect(); return (x-view.x)/view.z * (W/overlay.width) * (overlay.width/W); } // used by nudge; rough center convert
+function smoothScroll(){}
 
-function blueAmountByColumn(im, y0, y1, hueMin,hueMax,sMin,vMin){
-  const {data,width:W}=im; const col=new Float32Array(W).fill(0);
-  for(let x=0;x<W;x++){
-    let s=0; for(let y=y0;y<=y1;y++){
-      const i=(y*W+x)*4; const {h,s:S,v}=rgb2hsv(data[i],data[i+1],data[i+2]);
-      if((h>hueMin&&h<hueMax)&&S>=sMin&&v>=vMin) s++;
-    } col[x]=s;
-  }
-  return smooth1D(col,6);
-}
-function findLargestBlueRun(col, pad){
-  const W=col.length, L=pad, R=W-pad-1;
-  const thr = quantile([...col].slice(L,R+1), 0.55);
-  let mask=new Uint8Array(W).fill(0); for(let x=L;x<=R;x++) mask[x]=col[x]>=thr?1:0;
-  mask = close1D(mask, Math.max(1, Math.round(W/500)));
-  const runs = runsFromMask(mask, L, R);
-  if(!runs.length) return [L,R];
-  let best=runs[0], width=best.end-best.start;
-  for(const r of runs){ const w=r.end-r.start; if(w>width){ width=w; best=r; } }
-  return [best.start, best.end];
-}
-function quantile(a,q){ const b=[...a].sort((x,y)=>x-y); const i=Math.max(0,Math.min(b.length-1, Math.floor(q*(b.length-1)))); return b[i]; }
-function runsFromMask(mask, L, R){ const out=[]; let inRun=false, s=L; for(let x=L; x<=R; x++){ if(mask[x] && !inRun){ inRun=true; s=x; } if((!mask[x] || x===R) && inRun){ const e = (!mask[x] && x> L) ? x-1 : x; out.push({start:s,end:e}); inRun=false; } } return out; }
-function close1D(mask, rad){ return erode1D(dilate1D(mask,rad),rad); }
-function dilate1D(mask,rad){ const out=new Uint8Array(mask.length); for(let i=0;i<mask.length;i++){ let v=0; for(let k=-rad;k<=rad;k++){ const j=i+k; if(j>=0&&j<mask.length&&mask[j]){ v=1; break; } } out[i]=v; } return out; }
-function erode1D(mask,rad){ const out=new Uint8Array(mask.length); for(let i=0;i<mask.length;i++){ let v=1; for(let k=-rad;k<=rad;k++){ const j=i+k; if(!(j>=0&&j<mask.length&&mask[j])){ v=0; break; } } out[i]=v; } return out; }
-function equalBounds(L,R,n){ const step=(R-L)/n; const b=[L]; for(let i=1;i<n;i++) b.push(Math.round(L+i*step)); b.push(R); return b; }
-
-function cropROI(imgEl, roi){
-  const c=document.createElement('canvas'); const W=imgEl.naturalWidth, H=imgEl.naturalHeight;
-  c.width=Math.round(roi.w*W); c.height=Math.round(roi.h*H);
-  const sx=roi.x*W, sy=roi.y*H;
-  c.getContext('2d').drawImage(imgEl, sx,sy, roi.w*W, roi.h*H, 0,0,c.width,c.height);
-  return c;
-}
-function slotOccupied(c){
-  const ctx=c.getContext('2d');
-  const cx=Math.round(c.width*0.20), cw=Math.round(c.width*0.60);
-  const cy=Math.round(c.height*0.15), ch=Math.round(c.height*0.60);
-  const {data}=ctx.getImageData(cx,cy,cw,ch);
-  const cols=new Float32Array(cw).fill(0); const dark=130;
-  for(let y=0;y<ch;y++){ for(let x=0;x<cw;x++){ const i=(y*cw+x)*4; const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; if(L<dark) cols[x]++; } }
-  for(let x=0;x<cw;x++) cols[x]/=ch;
-  let best=0,run=0; for(let x=0;x<cw;x++){ if(cols[x]>0.5){ run++; best=Math.max(best,run);} else run=0; }
-  return best>=Math.round(cw*0.25);
-}
+/* initial */
+resetGuides(); buildRowPicker(); drawGrid(); status('Upload a photo, then use Rows/Edges/Slots to line it up. Use “From OCR” to seed the slots.');
 </script>
 </body>
 </html>
