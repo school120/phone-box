@@ -1,598 +1,506 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Phone Box Attendance — Row-wise Blue Alignment (12×5)</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-<script defer src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.3/dist/tesseract.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1"></script>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>Phone Box — Auto Overlay + Roster (12×5)</title>
 <style>
-  :root { --bg:#0b1020; --card:#121833; --muted:#8ea0d0; --accent:#3ad0ff; }
+  :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0;--accent:#32d0ff}
   *{box-sizing:border-box}
   html,body{height:100%}
-  body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;background:var(--bg);color:#fff}
-  header{padding:16px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:12px}
-  .badge{background:rgba(255,255,255,.1);padding:4px 8px;border-radius:999px;font-size:12px}
-  main{max-width:1100px;margin:0 auto;padding:12px;}
-  .wrap{display:grid;grid-template-columns:1.05fr .95fr;gap:16px}
-  .card{background:var(--card);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
-  h2{margin:0 0 12px;font-weight:800}
-  label{display:block;margin:.5rem 0 .35rem;color:var(--muted);font-size:14px}
-  select,input[type="file"],button{width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:#0e1533;color:#fff}
-  button.primary{background:linear-gradient(180deg,#39bdf2,#1aa1d9);border:none;font-weight:700}
+  body{margin:0;background:var(--bg);color:#fff;font-family:system-ui,-apple-system,Inter,Roboto,Segoe UI}
+  header{padding:14px 16px;border-bottom:1px solid #ffffff1a;font-weight:800}
+  main{max-width:1200px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px}
+  .card{background:var(--card);border:1px solid #ffffff1a;border-radius:16px;padding:14px;box-shadow:0 10px 30px #0008}
+  label{display:block;margin:10px 0 6px;color:var(--muted);font-size:14px}
+  input[type="file"],select,button{width:100%;padding:14px 16px;border-radius:12px;border:1px solid #ffffff2b;background:#0f1738;color:#fff;font-size:16px}
+  button.primary{background:linear-gradient(180deg,#3bc2f2,#1aa1d9);border:none;font-weight:800}
   small{color:var(--muted)}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  #preview{position:relative;width:100%;aspect-ratio:3/5;background:#0d1330;border-radius:12px;display:flex;align-items:center;justify-content:center;border:1px dashed rgba(255,255,255,.18);overflow:hidden}
-  #preview>img{width:100%;height:100%;object-fit:cover}
-  #overlay{position:absolute;inset:0;pointer-events:none}
+
+  /* Preview area */
+  #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0c1333;min-height:220px;touch-action:none}
+  #img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;z-index:0}
+  #overlay{position:absolute;inset:0;pointer-events:none;z-index:1}
+
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  .pill{display:inline-block;padding:.2rem .6rem;border-radius:999px;background:#ffffff24;font-size:12px}
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:6px;margin:10px 0}
+  .slot{background:#0f1738;border:1px solid #ffffff24;aspect-ratio:3/5;border-radius:8px;position:relative}
+  .slot span{position:absolute;inset:auto 6px 6px 6px;font-size:12px;color:#9ab0ff}
   table{width:100%;border-collapse:collapse}
-  th,td{border-bottom:1px solid rgba(255,255,255,.08);padding:8px 6px;text-align:left}
-  tr.mismatch{background:rgba(255,80,80,.12)}
-  tr.ok{opacity:.65}
-  .pill{display:inline-block;padding:.15rem .45rem;border-radius:999px;background:rgba(255,255,255,.12);font-size:12px}
-  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:6px}
-  .slot{background:#0f1738;border:1px solid rgba(255,255,255,.08);aspect-ratio:3/5;border-radius:8px;position:relative}
-  .slot span{position:absolute;inset:auto 6px 6px 6px;font-size:10px;color:var(--muted)}
-  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center}
-  .controls.sticky{position:sticky;bottom:0;z-index:5;background:linear-gradient(180deg,rgba(18,24,51,0),var(--card));padding-bottom:10px}
-  details summary{cursor:pointer}
-  details > div{background:#0f1738;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:10px}
-  @media (max-width: 820px) {
-    main{padding:8px}
-    .wrap{grid-template-columns:1fr;gap:12px}
-    .row{grid-template-columns:1fr;gap:8px}
-    button,select,input[type="file"]{padding:14px 16px;font-size:16px}
-    table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:nowrap;border-radius:12px}
-    th,td{padding:10px 8px}
+  th,td{border-bottom:1px solid #ffffff1f;padding:10px 6px;text-align:left}
+  tr.missing{background:#ff50501a}
+  tr.ok{opacity:.9}
+  .hint{font-size:13px;color:#9ab0ff}
+  @media (max-width: 900px){
+    main{grid-template-columns:1fr}
+    header{font-size:18px}
+    .row{grid-template-columns:1fr}
   }
 </style>
 </head>
 <body>
-<header>
-  <div style="font-weight:800">📱 Phone Box Attendance</div>
-  <div class="badge">Row-wise blue alignment • 12 columns per row</div>
-</header>
+<header>📱 Phone Box — Auto Overlay + Roster (12×5)</header>
+
 <main>
-  <div class="wrap">
-    <section class="card">
-      <h2>Scan a Box</h2>
-      <div class="row">
-        <div>
-          <label>Choose box</label>
-          <select id="boxSelect">
-            <option value="">Auto-detect from labels (OCR)</option>
-            <optgroup label="Grade Boxes" id="gradeBoxes"></optgroup>
-            <optgroup label="Special"><option>SM1</option><option>SM2</option></optgroup>
-          </select>
-        </div>
-        <div>
-          <label>Roster CSV</label>
-          <select id="rosterChoice">
-            <option value="./data/roster.csv">Use repo roster (./data/roster.csv)</option>
-            <option value="upload">Upload a different CSV…</option>
-          </select>
-          <input id="rosterUpload" type="file" accept=".csv" style="display:none;margin-top:6px" />
-        </div>
+  <section class="card" id="left">
+    <div id="stage">
+      <img id="img" alt="preview">
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <div class="grid" id="boxGrid"></div>
+    <table>
+      <thead><tr><th>Slot</th><th>Expected</th><th>Status</th></tr></thead>
+      <tbody id="results"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <label>Box</label>
+    <select id="box"></select>
+
+    <label style="margin-top:10px">Roster CSV</label>
+    <input id="rosterFile" type="file" accept=".csv">
+
+    <label style="margin-top:10px">Upload a box photo</label>
+    <input id="photo" type="file" accept="image/*" capture="environment">
+
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label>Row height % (above numbers)</label>
+        <input id="rowPct" type="range" min="45" max="95" step="5" value="70">
       </div>
-
-      <div class="row" style="margin-top:10px">
-        <div>
-          <label>Take/Upload a photo</label>
-          <input id="photo" type="file" accept="image/*" capture="environment" />
-        </div>
-        <div>
-          <label>Calibration</label>
-          <div style="display:flex; gap:8px; flex-wrap:wrap">
-            <button id="autoBtn" class="primary">Auto-calibrate (precise rows + per-row columns)</button>
-            <button id="forceGridBtn">Show simple equal grid</button>
-          </div>
-          <small>Cyan lines = <b>top edge</b> of each blue strip. Yellow ticks = <b>per-row</b> slot boundaries. Rectangles sit <b>directly above</b> the blue.</small>
-        </div>
+      <div>
+        <label>Edge crop % (ignore sides)</label>
+        <input id="edgePct" type="range" min="0" max="15" step="1" value="5">
       </div>
+    </div>
 
-      <div id="preview" style="margin-top:12px">
-        <small>Photo preview appears here</small>
-        <canvas id="overlay"></canvas>
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label>Slot inset % (avoid foam walls)</label>
+        <input id="insetPct" type="range" min="0" max="25" step="1" value="10">
       </div>
-
-      <div class="controls sticky">
-        <button class="primary" id="analyzeBtn">Analyze Attendance</button>
-        <button id="saveEmbeddingBtn">Save Current Embeddings → Roster</button>
-
-        <label style="display:flex;align-items:center;gap:8px;margin-left:8px">
-          <input id="toggleOverlay" type="checkbox" checked style="width:auto"> Show rectangles
-        </label>
-        <label style="display:flex;align-items:center;gap:8px">
-          <input id="toggleGuides" type="checkbox" checked style="width:auto"> Show guides
-        </label>
-
-        <details style="margin-left:auto">
-          <summary>Debug / Tuning</summary>
-          <div style="display:grid;gap:8px;margin-top:8px">
-            <label>Blue hue min (deg)
-              <input id="blueHueMin" type="range" min="170" max="210" step="1" value="190">
-            </label>
-            <label>Blue hue max (deg)
-              <input id="blueHueMax" type="range" min="230" max="280" step="1" value="255">
-            </label>
-            <label>Blue min saturation S (0–1)
-              <input id="blueSat" type="range" min="0" max="1" step="0.01" value="0.35">
-            </label>
-            <label>Blue min value V (0–1)
-              <input id="blueVal" type="range" min="0" max="1" step="0.01" value="0.25">
-            </label>
-            <label>Ignore X edges (% of width)
-              <input id="edgeCropPct" type="range" min="0" max="15" step="1" value="5">
-            </label>
-            <label>Phone band height (% of row gap)
-              <input id="phonePct" type="range" min="30" max="100" step="5" value="70">
-            </label>
-            <div style="font-size:12px;color:var(--muted)">Blue bar tops y: <span id="blueList">—</span></div>
-          </div>
-        </details>
+      <div>
+        <label>Blue sensitivity</label>
+        <input id="blueSens" type="range" min="20" max="80" step="5" value="30">
       </div>
-      <small id="status"></small>
-    </section>
+    </div>
 
-    <section class="card">
-      <h2>Results</h2>
-      <div id="boxGrid" class="grid" style="margin-bottom:10px"></div>
-      <table>
-        <thead><tr><th>Slot</th><th>Expected</th><th>Detected</th><th>Status</th></tr></thead>
-        <tbody id="resultsBody"></tbody>
-      </table>
-    </section>
-  </div>
+    <div class="toolbar">
+      <button id="auto" class="primary">Auto Align</button>
+      <button id="analyze" disabled>Analyze & Compare</button>
+      <label class="hint"><input id="fine" type="checkbox" style="vertical-align:middle"> Fine-tune (drag rows & edges)</label>
+    </div>
+
+    <div class="toolbar">
+      <label class="hint"><input id="showGuides" type="checkbox" checked style="vertical-align:middle"> Show guides</label>
+      <span id="status" class="pill"></span>
+    </div>
+  </section>
 </main>
 
 <script>
-/* ---------- UI ---------- */
-const BOX_IDS=[]; ['9','10','11','12'].forEach(g=>['A','B','C','D','E','F'].forEach(l=>BOX_IDS.push(`${g}${l}`)));
-const gradeBoxes=document.getElementById('gradeBoxes'); BOX_IDS.forEach(id=>{const o=document.createElement('option');o.textContent=o.value=id;gradeBoxes.appendChild(o);});
+/* ========= Elements & State ========= */
+const img = document.getElementById('img');
+const stage = document.getElementById('stage');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
 
-const photoInput=document.getElementById('photo'), preview=document.getElementById('preview'), overlay=document.getElementById('overlay');
-const statusEl=document.getElementById('status'), resultsBody=document.getElementById('resultsBody');
-const rosterChoice=document.getElementById('rosterChoice'), rosterUpload=document.getElementById('rosterUpload');
-const boxGrid=document.getElementById('boxGrid'), toggleOverlay=document.getElementById('toggleOverlay'), toggleGuides=document.getElementById('toggleGuides');
+const boxSel = document.getElementById('box');
+const rosterFile = document.getElementById('rosterFile');
+const photo = document.getElementById('photo');
+const autoBtn = document.getElementById('auto');
+const analyzeBtn = document.getElementById('analyze');
+const showGuidesEl = document.getElementById('showGuides');
+const fineEl = document.getElementById('fine');
+const statusEl = document.getElementById('status');
+const boxGrid = document.getElementById('boxGrid');
+const resultsBody = document.getElementById('results');
 
-const blueHueMinEl=document.getElementById('blueHueMin'), blueHueMaxEl=document.getElementById('blueHueMax');
-const blueSatEl=document.getElementById('blueSat'), blueValEl=document.getElementById('blueVal');
-const edgeCropPctEl=document.getElementById('edgeCropPct'), phonePctEl=document.getElementById('phonePct');
-const blueListEl=document.getElementById('blueList');
+function setStatus(t){ statusEl.textContent=t||''; }
 
-let roster=[], boxConfig={}, mobilenetModel=null, currentImage=null, lastRecords=null;
-let guides=null; // {tops[], boundsByRow[5][13]}
+const rowPctEl = document.getElementById('rowPct');
+const edgePctEl = document.getElementById('edgePct');
+const insetPctEl = document.getElementById('insetPct');
+const blueSensEl = document.getElementById('blueSens');
 
-/* ---------- Roster ---------- */
-async function loadRoster(){
-  return new Promise((resolve)=>{
-    if(rosterChoice.value==='upload'){
-      if(!rosterUpload.files[0]) return resolve([]);
-      Papa.parse(rosterUpload.files[0], {header:true, complete:r=>resolve(r.data)});
-    } else {
-      Papa.parse(rosterChoice.value, {download:true, header:true, complete:r=>resolve(r.data)});
+function rowHeight(){ return parseInt(rowPctEl.value,10)/100; }
+function edgeCrop(){ return parseInt(edgePctEl.value,10)/100; }
+function insetFrac(){ return parseInt(insetPctEl.value,10)/100; }
+function blueSens(){ return parseInt(blueSensEl.value,10)/100; }
+
+let current=null;         // {image, W, H}
+let roster=[];            // [{...}]
+let rowTops=[];           // 5 y positions
+let LR=[];                // 5×[L,R]
+let boundsByRow=[];       // 5×13
+let rois=[];              // 60 rects
+let dragging=null;        // {type:'row'|'L'|'R', row:i, dy/dx}
+
+/* ========= Boxes ========= */
+(function fillBoxes(){
+  const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
+  grades.forEach(g=>letters.forEach(l=>ids.push(g+l)));
+  ids.push('SM1','SM2');
+  boxSel.innerHTML = ids.map(x=>`<option>${x}</option>`).join('');
+})();
+
+/* ========= CSV Parser (no deps) ========= */
+function parseCSV(text){
+  const rows=[]; let row=[], cur='', inQ=false; const push=()=>{row.push(cur); cur='';};
+  for(let i=0;i<text.length;i++){
+    const ch=text[i], nx=text[i+1];
+    if(inQ){
+      if(ch==='"' && nx==='"'){ cur+='"'; i++; }
+      else if(ch==='"'){ inQ=false; }
+      else cur+=ch;
+    }else{
+      if(ch==='"'){ inQ=true; }
+      else if(ch===','){ push(); }
+      else if(ch==='\n' || ch==='\r'){
+        if(ch==='\r' && nx==='\n') i++;
+        push(); rows.push(row); row=[];
+      }else cur+=ch;
     }
-  });
-}
-function securityToBoxSlot(sec){
-  if(!sec) return null; const s=String(sec).replace(/\s+/g,'').toUpperCase();
-  const m=s.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/);
-  if(!m) return null; return {box:m[1], slot:parseInt(m[2],10)};
-}
-function rosterByBox(boxId){
-  const map={}; for(const row of roster){
-    const info=securityToBoxSlot(row['Security Number']||row['SecurityNumber']);
-    if(info && info.box===boxId) map[info.slot]=row['Full Name'];
-  } return map;
-}
-function drawGrid(namesBySlot={}){
-  boxGrid.innerHTML='';
-  for(let r=0;r<5;r++) for(let c=0;c<12;c++){
-    const idx=r*12+c+1;
-    const d=document.createElement('div'); d.className='slot';
-    const s=document.createElement('span'); s.textContent=namesBySlot[idx]||`#${idx}`;
-    d.appendChild(s); boxGrid.appendChild(d);
   }
+  push(); if(row.length) rows.push(row);
+  // header -> objects
+  const header = rows.shift().map(h=>h.trim());
+  return rows.filter(r=>r.length && r.some(x=>x.trim()!==''))
+             .map(r=>{ const o={}; header.forEach((h,i)=>o[h]=r[i]||''); return o; });
 }
 
-/* ---------- Photo preview ---------- */
-photoInput.addEventListener('change',()=>{
-  const f=photoInput.files[0]; if(!f) return;
+/* ========= Photo Preview ========= */
+photo.addEventListener('change', e=>{
+  const f=e.target.files[0]; if(!f) return;
   const url=URL.createObjectURL(f);
-  const img=new Image();
-  img.onload=()=>{
-    const scaled = toMaxSize(img, 1600);
-    preview.innerHTML=''; preview.appendChild(scaled); preview.appendChild(overlay);
-    currentImage=scaled; resizeOverlay();
-    forceSimpleGrid(); // show something immediately
-    setTimeout(autoDetectBox, 200);
+  const im=new Image();
+  im.onload=()=>{
+    current={image:im, W:im.naturalWidth, H:im.naturalHeight};
+    img.src=url; img.style.display='block';
+    sizeToImageAspect();
+    draw();
+    setStatus('Photo loaded. Tap “Auto Align”.');
   };
-  img.src=url;
+  im.onerror=()=>setStatus('Could not load image.');
+  im.src=url;
 });
-window.addEventListener('resize', resizeOverlay);
-window.addEventListener('orientationchange', ()=>setTimeout(resizeOverlay,300));
-rosterChoice.addEventListener('change',()=>{ rosterUpload.style.display = rosterChoice.value==='upload'?'block':'none'; });
-[toggleOverlay,toggleGuides].forEach(el=>el.addEventListener('change', drawOverlay));
-
-function toMaxSize(img, maxW=1600){
-  const r=Math.min(1, maxW/img.naturalWidth);
-  if(r===1) return img;
-  const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r);
-  c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-  const out=new Image(); out.onload=resizeOverlay; out.src=c.toDataURL('image/jpeg',0.9); return out;
+window.addEventListener('resize', sizeToImageAspect);
+function sizeToImageAspect(){
+  if(!current) return;
+  const W = stage.clientWidth;
+  const H = Math.max(220, Math.round(W * (current.H/current.W)));
+  stage.style.height = H+'px';
+  overlay.width=W; overlay.height=H;
 }
 
-/* ---------- Overlay ---------- */
-function resizeOverlay(){
-  if(!currentImage) return;
-  const img=preview.querySelector('img'); if(!img) return;
-  overlay.width=img.clientWidth; overlay.height=img.clientHeight;
-  drawOverlay();
-}
-function drawOverlay(){
-  if(!currentImage || !overlay.width) return;
-  const ctx=overlay.getContext('2d'); ctx.clearRect(0,0,overlay.width,overlay.height);
-  const cfg=boxConfig[document.getElementById('boxSelect').value||'AUTO']; if(!cfg) return;
-  const scaleX=overlay.width/currentImage.naturalWidth, scaleY=overlay.height/currentImage.naturalHeight;
-
-  if(toggleGuides.checked && guides){
-    // cyan = top edge of blue bar
-    ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent')||'#3ad0ff'; ctx.lineWidth=2;
-    (guides.tops||[]).forEach(y=>{ const yy=y*scaleY; ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(overlay.width,yy); ctx.stroke(); });
-    // yellow = per-row column bounds (draw short ticks around that row to avoid clutter)
-    ctx.strokeStyle='#ffd63a'; ctx.lineWidth=1.25;
-    if(guides.boundsByRow){
-      const tickH = Math.max(10, overlay.height*0.05);
-      guides.boundsByRow.forEach((bounds,ri)=>{
-        const yy = (guides.tops[ri]||0)*scaleY;
-        bounds.forEach(x=>{
-          const xx=x*scaleX;
-          ctx.beginPath(); ctx.moveTo(xx, yy - tickH); ctx.lineTo(xx, yy + tickH); ctx.stroke();
-        });
-      });
-    }
+/* ========= Roster ========= */
+rosterFile.addEventListener('change', ()=>{
+  const f=rosterFile.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ roster=parseCSV(r.result||''); setStatus('Roster loaded.'); };
+  r.readAsText(f);
+});
+function namesForBox(boxId){
+  const out={};
+  for(const row of roster){
+    const sec = (row['Security Number']||row['SecurityNumber']||'').toString().toUpperCase().replace(/\s+/g,'');
+    const m = sec.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/);
+    if(!m) continue;
+    const box=m[1], slot=parseInt(m[2],10);
+    if(box===boxId) out[slot] = row['Full Name']||row['FullName']||'';
   }
-
-  if(toggleOverlay.checked && cfg.roisDetect){
-    ctx.lineWidth=2;
-    cfg.roisDetect.forEach((roi,i)=>{
-      const x=roi.x*currentImage.naturalWidth*scaleX;
-      const y=roi.y*currentImage.naturalHeight*scaleY;
-      const w=roi.w*currentImage.naturalWidth*scaleX;
-      const h=roi.h*currentImage.naturalHeight*scaleY;
-      const status = lastRecords ? lastRecords[i]?.status : null;
-      ctx.strokeStyle = status==='ok' ? '#3ad27a' : status==='missing' ? '#ff6e6e' : 'rgba(255,255,255,.95)';
-      ctx.strokeRect(x,y,w,h);
-    });
-  }
+  return out;
 }
-
-/* ---------- Calibration (precise rows + 12 columns PER ROW) ---------- */
-document.getElementById('autoBtn').addEventListener('click', autoCalibratePrecise);
-document.getElementById('forceGridBtn').addEventListener('click', forceSimpleGrid);
-
-function forceSimpleGrid(){
-  if(!currentImage) return alert('Take or upload a photo first.');
-  const box=document.getElementById('boxSelect').value||'AUTO';
-  const W=currentImage.naturalWidth, H=currentImage.naturalHeight;
-  const tops=[0.22,0.40,0.58,0.76,0.94].map(p=>Math.round(p*H)); // rough fallback
-  const bounds = equalBounds(W, edgeCropPct());
-  const boundsByRow=[0,1,2,3,4].map(()=>bounds);
-  const rois = buildROIs(tops, boundsByRow, W, H);
-  boxConfig[box]={roisDetect:rois};
-  guides={tops, boundsByRow};
-  statusEl.textContent='Simple equal grid shown.';
-  drawOverlay();
-}
-
-async function autoCalibratePrecise(){
-  if(!currentImage) return alert('Take or upload a photo first.');
-  const box=document.getElementById('boxSelect').value||'AUTO';
-
-  const hueMin=parseInt(blueHueMinEl.value,10);
-  const hueMax=parseInt(blueHueMaxEl.value,10);
-  const sMin=parseFloat(blueSatEl.value);
-  const vMin=parseFloat(blueValEl.value);
-
-  const small = downscale(currentImage, 1200);
-  const {tops} = await findBlueBarsPrecise(small, {hueMin,hueMax,sMin,vMin,edgeCrop:edgeCropPct()});
-
-  if(tops.length!==5){
-    forceSimpleGrid();
-    alert('Could not find 5 blue bars — showing simple grid instead.');
-    return;
-  }
-  blueListEl.textContent = tops.map(y=>y.toFixed(0)).join(', ');
-
-  // For each row independently, find 12 pads from the blue strip band
-  const boundsByRow=[];
-  const ctx = small.getContext('2d');
-  const im = ctx.getImageData(0,0,small.width,small.height);
-  const Wbig=currentImage.naturalWidth, Hbig=currentImage.naturalHeight;
-  const scaleX = small.width / Wbig, scaleY = small.height / Hbig;
-
-  // estimate row gap to size the blue band to analyze
-  const gaps=[]; for(let i=1;i<tops.length;i++) gaps.push(tops[i]-tops[i-1]);
-  const avgGapSmall = gaps.length? gaps.reduce((a,b)=>a+b,0)/gaps.length : small.height/5;
-  const bandHSmall = Math.max(6, Math.round(avgGapSmall*0.22)); // 22% of row gap, covers number strip
-
-  for(const topBig of tops){
-    const topSmall = Math.max(0, Math.round(topBig*scaleY));
-    const bnds = find12ColumnsFromBlueBand(im, topSmall, bandHSmall, edgeCropPct(), {hueMin,hueMax,sMin,vMin});
-    boundsByRow.push(bnds.map(x=> Math.round(x/scaleX))); // rescale to full image coordinates
-  }
-
-  const rois = buildROIs(tops, boundsByRow, Wbig, Hbig);
-  boxConfig[box]={roisDetect:rois};
-  guides={tops, boundsByRow};
-  statusEl.textContent='Calibrated: row-wise columns and rectangles are above the blue strips.';
-  drawOverlay();
-}
-
-/* --- Build ROIs from per-row bounds --- */
-function buildROIs(tops, boundsByRow, W, H){
-  const rois=[];
-  // detect height uses row gap from tops:
-  const gaps=[]; for(let i=1;i<tops.length;i++) gaps.push(tops[i]-tops[i-1]);
-  const rowGap = gaps.length? gaps.reduce((a,b)=>a+b,0)/gaps.length : H/5;
-  const detectH = Math.max(10, Math.round(rowGap * (parseInt(phonePctEl.value,10)/100)));
-
+function drawNamesGrid(namesBySlot={}){
+  boxGrid.innerHTML='';
   for(let r=0;r<5;r++){
-    const yBottom = Math.max(0, tops[r]);
-    const yTop    = Math.max(0, yBottom - detectH);
-    const bounds = boundsByRow[r];
     for(let c=0;c<12;c++){
-      const x0=bounds[c], x1=bounds[c+1];
-      // inset: 12% base; add 20% at edges
-      const base = Math.round((x1-x0)*0.12);
-      const edgeExtra = (c===0 || c===11) ? Math.round((x1-x0)*0.20) : 0;
-      const xa = x0 + Math.max(base, edgeExtra);
-      const xb = x1 - Math.max(base, edgeExtra);
-      rois.push({x:xa/W, y:yTop/H, w:(xb-xa)/W, h:(yBottom-yTop)/H});
+      const idx=r*12+c+1;
+      const d=document.createElement('div'); d.className='slot';
+      const s=document.createElement('span'); s.textContent=namesBySlot[idx]||`#${idx}`;
+      d.appendChild(s); boxGrid.appendChild(d);
     }
   }
-  return rois;
 }
 
-/* --- Per-row column finding from blue band --- */
-function find12ColumnsFromBlueBand(imageData, topY, bandH, edgeCrop, hsv){
-  const {data,width:W,height:H}=imageData;
-  const xL=Math.round(W*edgeCrop), xR=Math.round(W*(1-edgeCrop));
-  // accumulate "blue count" per column inside the band starting slightly below top (to sit inside blue)
-  const y0=Math.min(H-1, Math.max(0, topY+1)), y1=Math.min(H-1, y0+bandH);
+/* ========= Auto Align (no OCR) ========= */
+autoBtn.addEventListener('click', async ()=>{
+  if(!current){ alert('Upload a photo first.'); return; }
+  analyzeBtn.disabled = true;
+  setStatus('Finding blue bars…');
 
-  const col=new Float32Array(W).fill(0);
-  for(let x=xL; x<=xR; x++){
-    let s=0; for(let y=y0; y<=y1; y++){
-      const i=(y*W+x)*4; const r=data[i], g=data[i+1], b=data[i+2];
-      const {h,s:S,v}=rgb2hsv(r,g,b);
-      if((h>hsv.hueMin && h<hsv.hueMax) && S>=hsv.sMin && v>=hsv.vMin) s++;
+  rowTops = await findBlueBars(current.image, edgeCrop(), blueSens());
+  if(rowTops.length!==5){ setStatus('Could not find 5 blue bars. Bump “Blue sensitivity” or “Edge crop %”.'); draw(); return; }
+
+  setStatus('Measuring row edges…');
+  LR = await findLRForRows(current.image, rowTops, edgeCrop());
+
+  boundsByRow = [];
+  for(let r=0;r<5;r++){ boundsByRow.push(equalBounds(LR[r][0], LR[r][1], 12)); }
+
+  const gaps=[]; for(let i=1;i<rowTops.length;i++) gaps.push(rowTops[i]-rowTops[i-1]);
+  const avgGap = gaps.reduce((a,b)=>a+b,0)/gaps.length;
+
+  rois=[];
+  for(let r=0;r<5;r++){
+    const yBottom=rowTops[r];
+    const yTop=Math.max(0, Math.round(yBottom-avgGap*rowHeight()));
+    const b=boundsByRow[r];
+    for(let i=0;i<12;i++){
+      const x0=b[i], x1=b[i+1];
+      const inset=Math.round((x1-x0)*insetFrac());
+      rois.push({x:x0+inset, y:yTop, w:Math.max(1,(x1-x0-2*inset)), h:yBottom-yTop, row:r, col:i});
     }
-    col[x]=s;
   }
-  // smooth + threshold
-  const sm = smooth1D(col, 6);
-  const thr0 = quantile(sm.slice(xL,xR+1), 0.50);
-  let mask = new Uint8Array(W).fill(0); for(let x=xL;x<=xR;x++) mask[x] = sm[x] >= thr0 ? 1 : 0;
-  mask = close1D(mask, Math.max(1, Math.round(W/450))); // fill digit holes
+  draw();
+  analyzeBtn.disabled=false;
+  setStatus('Aligned. (Tip: enable “Fine-tune” to drag rows/edges if needed.)');
+});
 
-  // runs → exactly 12 using merge/split strategies
-  let runs = runsFromMask(mask, xL, xR);
-  runs = filterMinWidth(runs, Math.round(W/40)); // ~2.5% width minimum
-  runs = normalizeRunsTo12(runs, xL, xR);
+/* ========= Analyze ========= */
+analyzeBtn.addEventListener('click', ()=>{
+  if(!rois.length) return alert('Auto Align first.');
+  if(!boxSel.value) return alert('Choose a Box (e.g., 9B, 10C, SM1).');
+  if(!roster || roster.length===0) return alert('Load the roster CSV.');
 
-  // convert to 13 bounds (midpoints between adjacent centers; edges extrapolated)
-  const centers=runs.map(r=>Math.round((r.start+r.end)/2));
-  const bounds=[Math.round((3*centers[0]-centers[1])/2)];
-  for(let k=0;k<centers.length-1;k++) bounds.push(Math.round((centers[k]+centers[k+1])/2));
-  bounds.push(Math.round((3*centers[11]-centers[10])/2));
-  bounds[0]=Math.max(bounds[0], xL); bounds[12]=Math.min(bounds[12], xR);
-  return bounds;
-}
+  const names = namesForBox(boxSel.value);
+  drawNamesGrid(names);
 
-function normalizeRunsTo12(runs, L, R){
-  if(runs.length===12) return runs;
-  // Too many: merge by smallest gaps
-  while(runs.length>12){
-    let bestI=-1, bestGap=1e9;
-    for(let i=0;i<runs.length-1;i++){
-      const gap=runs[i+1].start - runs[i].end - 1;
-      if(gap<bestGap){ bestGap=gap; bestI=i; }
+  const rows=[];
+  for(let i=0;i<rois.length;i++){
+    const slot=i+1;
+    const expected=names[slot]||'';
+    const occ = slotOccupied(cropROI(rois[i]));
+    const status = occ ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
+    rows.push({slot, expected, status});
+  }
+
+  resultsBody.innerHTML='';
+  rows.forEach(r=>{
+    const tr=document.createElement('tr');
+    tr.className = r.status==='missing' ? 'missing' : (r.status==='present' ? 'ok' : '');
+    tr.innerHTML=`<td>${r.slot}</td><td>${r.expected||''}</td><td><span class="pill">${r.status}</span></td>`;
+    resultsBody.appendChild(tr);
+  });
+  setStatus('Compared to roster.');
+});
+
+/* ========= Drawing ========= */
+function draw(){
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  if(!current) return;
+  const sx=overlay.width/current.W, sy=overlay.height/current.H;
+
+  if(showGuidesEl.checked){
+    // cyan row lines
+    if(rowTops.length){
+      ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent')||'#32d0ff';
+      ctx.lineWidth=2;
+      for(const y of rowTops){ ctx.beginPath(); ctx.moveTo(0,y*sy); ctx.lineTo(overlay.width,y*sy); ctx.stroke(); }
     }
-    runs[bestI]={start:runs[bestI].start,end:runs[bestI+1].end};
-    runs.splice(bestI+1,1);
-  }
-  // Too few: split widest runs
-  while(runs.length<12){
-    let bestI=-1, bestW=-1;
-    for(let i=0;i<runs.length;i++){
-      const w=runs[i].end - runs[i].start + 1;
-      if(w>bestW){ bestW=w; bestI=i; }
-    }
-    const s=runs[bestI].start, e=runs[bestI].end, mid=Math.round((s+e)/2);
-    runs.splice(bestI,1,{start:s,end:mid-1},{start:mid,end:e});
-  }
-  return runs;
-}
-
-/* ---------- Math / helpers ---------- */
-function rgb2hsv(r,g,b){
-  r/=255; g/=255; b/=255;
-  const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min; let h=0;
-  if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; }
-  const s=max===0?0:d/max, v=max; return {h,s,v};
-}
-function downscale(img, maxW=900){ const r=Math.min(1,maxW/img.naturalWidth); const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r); c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c; }
-function smooth1D(arr, w=5){ const out=new Float32Array(arr.length); for(let i=0;i<arr.length;i++){ let s=0,c=0; for(let k=-w;k<=w;k++){ const j=i+k; if(j<0||j>=arr.length) continue; s+=arr[j]; c++; } out[i]=s/c; } return out; }
-function pickPeaks(series, count, minDist){ const idx=[...series].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const sel=[]; for(const [,i] of idx){ if(sel.every(j=>Math.abs(j-i)>minDist)) sel.push(i); if(sel.length>=count) break; } return sel.sort((a,b)=>a-b); }
-function quantile(a,q){ const b=[...a].sort((x,y)=>x-y); const i=Math.max(0,Math.min(b.length-1, Math.floor(q*(b.length-1)))); return b[i]; }
-function runsFromMask(mask, L, R){ const out=[]; let inRun=false, s=L; for(let x=L; x<=R; x++){ if(mask[x] && !inRun){ inRun=true; s=x; } if((!mask[x] || x===R) && inRun){ const e = (!mask[x] && x> L) ? x-1 : x; out.push({start:s,end:e}); inRun=false; } } return out; }
-function filterMinWidth(runs, minW){ return runs.filter(r => (r.end-r.start+1) >= minW); }
-function close1D(mask, rad){ return erode1D(dilate1D(mask,rad),rad); }
-function dilate1D(mask, rad){ const out=new Uint8Array(mask.length); for(let i=0;i<mask.length;i++){ let v=0; for(let k=-rad;k<=rad;k++){ const j=i+k; if(j>=0&&j<mask.length&&mask[j]){ v=1; break; } } out[i]=v; } return out; }
-function erode1D(mask, rad){ const out=new Uint8Array(mask.length); for(let i=0;i<mask.length;i++){ let v=1; for(let k=-rad;k<=rad;k++){ const j=i+k; if(!(j>=0&&j<mask.length&&mask[j])){ v=0; break; } } out[i]=v; } return out; }
-function equalBounds(W, edge){ const L=Math.round(W*edge), R=Math.round(W*(1-edge)); const w=R-L; const step=w/12; const b=[L]; for(let i=1;i<12;i++) b.push(Math.round(L+i*step)); b.push(R); return b; }
-function edgeCropPct(){ return (parseInt(edgeCropPctEl.value,10))/100; }
-
-/* ---------- Precise blue-bar finder (TOP edges) ---------- */
-async function findBlueBarsPrecise(canvas, {hueMin,hueMax,sMin,vMin,edgeCrop}) {
-  const ctx = canvas.getContext('2d');
-  const { data, width: W, height: H } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const x0 = Math.round(W*edgeCrop), x1 = Math.round(W*(1-edgeCrop));
-
-  const frac = new Float32Array(H);
-  for (let y = 0; y < H; y++) {
-    let cnt = 0, blue = 0;
-    for (let x = x0; x <= x1; x += 2) {
-      const i = (y*W + x)*4;
-      const r = data[i], g = data[i+1], b = data[i+2];
-      const {h,s,v} = rgb2hsv(r,g,b);
-      if ((h>hueMin && h<hueMax) && s>=sMin && v>=vMin) blue++;
-      cnt++;
-    }
-    frac[y] = cnt ? blue/cnt : 0;
-  }
-  let s = smooth1D(frac, 6);
-  let peaks = pickPeaks(s, 5, Math.round(H/8));
-  if (peaks.length < 5) {
-    for (let y = 0; y < H; y++) {
-      let cnt = 0, blue = 0;
-      for (let x = x0; x <= x1; x += 1) {
-        const i = (y*W + x)*4;
-        const r = data[i], g = data[i+1], b = data[i+2];
-        const {h,s,v} = rgb2hsv(r,g,b);
-        const ok=(h>hueMin-5 && h<hueMax+5) && s>=Math.max(0.2,sMin-0.1) && v>=Math.max(0.18,vMin-0.07);
-        if(ok) blue++;
-        cnt++;
+    // yellow L/R & white bounds
+    if(boundsByRow.length){
+      for(let r=0;r<5;r++){
+        const y=rowTops[r]*sy;
+        if(LR[r]){
+          ctx.strokeStyle='#ffd84a'; ctx.lineWidth=1.8;
+          const [L,R]=LR[r]; const h=40;
+          ctx.beginPath(); ctx.moveTo(L*sx,y-h); ctx.lineTo(L*sx,y+h); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(R*sx,y-h); ctx.lineTo(R*sx,y+h); ctx.stroke();
+        }
+        ctx.strokeStyle='#fff'; ctx.lineWidth=1.6;
+        boundsByRow[r].forEach(x=>{ const xx=x*sx; ctx.beginPath(); ctx.moveTo(xx,y-40); ctx.lineTo(xx,y+40); ctx.stroke(); });
       }
-      frac[y] = cnt ? blue/cnt : 0;
     }
-    s = smooth1D(frac, 8);
-    peaks = pickPeaks(s, 5, Math.round(H/9));
   }
-
-  const tops=[], centers=[], bottoms=[];
-  const win = Math.round(H*0.035);
-  for (const p of peaks) {
-    const a = Math.max(0, p - win), b = Math.min(H-1, p + win);
-    let localMax = 0; for (let y=a; y<=b; y++) localMax = Math.max(localMax, s[y]);
-    const T = localMax * 0.50;
-    let top=p, bottom=p;
-    for (let y=p; y>=a; y--) { if (s[y] >= T) top = y; else break; }
-    for (let y=p; y<=b; y++) { if (s[y] >= T) bottom = y; else break; }
-    tops.push(top); centers.push(Math.round((top+bottom)/2)); bottoms.push(bottom);
+  // slot rectangles
+  if(rois.length){
+    ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth=2;
+    for(const r of rois){ ctx.strokeRect(r.x*sx, r.y*sy, r.w*sx, r.h*sy); }
   }
-  const order=[...tops.keys()].sort((i,j)=>tops[i]-tops[j]);
-  return {
-    tops: order.map(i=>tops[i]),
-    centers: order.map(i=>centers[i]),
-    bottoms: order.map(i=>bottoms[i])
-  };
 }
 
-/* ---------- Embeddings + occupancy ---------- */
-async function ensureModel(){ if(!mobilenetModel) mobilenetModel = await mobilenet.load(); }
-function cropToCanvas(img, roi){ const c=document.createElement('canvas'); const W=img.naturalWidth, H=img.naturalHeight; c.width=Math.round(roi.w*W); c.height=Math.round(roi.h*H); c.getContext('2d').drawImage(img, roi.x*W, roi.y*H, roi.w*W, roi.h*H, 0,0,c.width,c.height); return c; }
-async function embedCanvas(canvas){ await ensureModel(); const logits=mobilenetModel.infer(canvas,true); const emb=await logits.data(); logits.dispose(); return Array.from(emb); }
-function cosSim(a,b){ let dot=0,na=0,nb=0; for(let i=0;i<a.length;i++){ dot+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } return dot/(Math.sqrt(na)*Math.sqrt(nb)+1e-8); }
-function slotOccupied(canvas){
-  const ctx=canvas.getContext('2d');
-  const cx=Math.round(canvas.width*0.20), cw=Math.round(canvas.width*0.60);
-  const cy=Math.round(canvas.height*0.15), ch=Math.round(canvas.height*0.60);
-  const {data} = ctx.getImageData(cx,cy,cw,ch);
-  const cols=new Float32Array(cw).fill(0); const darkCut=130;
-  for(let y=0;y<ch;y++){ for(let x=0;x<cw;x++){ const i=(y*cw+x)*4; const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; if(L<darkCut) cols[x]++; } }
+/* ========= Fine-tune (drag) ========= */
+stage.addEventListener('pointerdown', e=>{
+  if(!fineEl.checked || !current) return;
+  const {ix,iy}=screenToImage(e.clientX,e.clientY);
+  // pick closest row line first
+  let ri=-1, best=12e9;
+  for(let i=0;i<rowTops.length;i++){
+    const d=Math.abs(rowTops[i]-iy);
+    if(d<best){best=d; ri=i;}
+  }
+  const nearRow = best<30;
+  if(nearRow){
+    // check L/R proximity too
+    const [L,R]=LR[ri]||[0,current.W];
+    const dL=Math.abs(L-ix), dR=Math.abs(R-ix);
+    if(dL<20){ dragging={type:'L', row:ri, dx:L-ix}; }
+    else if(dR<20){ dragging={type:'R', row:ri, dx:R-ix}; }
+    else { dragging={type:'row', row:ri, dy:rowTops[ri]-iy}; }
+    stage.setPointerCapture(e.pointerId);
+  }
+});
+stage.addEventListener('pointermove', e=>{
+  if(!dragging||!current) return;
+  const {ix,iy}=screenToImage(e.clientX,e.clientY);
+  const r=dragging.row;
+  if(dragging.type==='row'){
+    // keep order (no crossing rows)
+    const min = r?rowTops[r-1]+20:0;
+    const max = r<4?rowTops[r+1]-20:current.H-2;
+    rowTops[r]=clamp(iy+dragging.dy,min,max);
+  }else if(dragging.type==='L'){
+    const L=clamp(ix+dragging.dx, 0, (LR[r]?LR[r][1]-20:current.W-20));
+    const old=LR[r]||[0,current.W]; LR[r]=[L,old[1]];
+    boundsByRow[r]=remapBounds(boundsByRow[r], old, LR[r]);
+  }else if(dragging.type==='R'){
+    const R=clamp(ix+dragging.dx, (LR[r]?LR[r][0]+20:20), current.W);
+    const old=LR[r]||[0,current.W]; LR[r]=[old[0],R];
+    boundsByRow[r]=remapBounds(boundsByRow[r], old, LR[r]);
+  }
+  rebuildROIs(); draw();
+});
+stage.addEventListener('pointerup', ()=>dragging=null);
+
+function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
+function remapBounds(b, oldLR, newLR){
+  const [oL,oR]=oldLR, [nL,nR]=newLR;
+  return b.map(x=> Math.round(nL + ( (x-oL)/Math.max(1,(oR-oL)) )*(nR-nL) ));
+}
+function rebuildROIs(){
+  if(!rowTops.length||!boundsByRow.length) return;
+  rois=[];
+  const gaps=[]; for(let i=1;i<rowTops.length;i++) gaps.push(rowTops[i]-rowTops[i-1]);
+  const avgGap=gaps.reduce((a,b)=>a+b,0)/gaps.length;
+  for(let r=0;r<5;r++){
+    const yBottom=rowTops[r];
+    const yTop=Math.max(0, Math.round(yBottom-avgGap*rowHeight()));
+    const b=boundsByRow[r];
+    for(let i=0;i<12;i++){
+      const x0=b[i], x1=b[i+1];
+      const inset=Math.round((x1-x0)*insetFrac());
+      rois.push({x:x0+inset, y:yTop, w:Math.max(1,(x1-x0-2*inset)), h:yBottom-yTop, row:r, col:i});
+    }
+  }
+}
+
+/* ========= Image/Color helpers ========= */
+function screenToImage(cx,cy){
+  const r=overlay.getBoundingClientRect();
+  const x=(cx-r.left)/r.width*current.W;
+  const y=(cy-r.top)/r.height*current.H;
+  return {ix:x, iy:y};
+}
+function cropROI(r){
+  const c=document.createElement('canvas'); c.width=r.w; c.height=r.h;
+  c.getContext('2d').drawImage(current.image, r.x,r.y,r.w,r.h, 0,0,r.w,r.h);
+  return c;
+}
+function slotOccupied(c){
+  const k=c.getContext('2d');
+  const cx=Math.round(c.width*0.20), cw=Math.round(c.width*0.60);
+  const cy=Math.round(c.height*0.15), ch=Math.round(c.height*0.60);
+  const {data}=k.getImageData(cx,cy,cw,ch);
+  const cols=new Float32Array(cw).fill(0), dark=130;
+  for(let y=0;y<ch;y++){ for(let x=0;x<cw;x++){ const i=(y*cw+x)*4; const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; if(L<dark) cols[x]++; } }
   for(let x=0;x<cw;x++) cols[x]/=ch;
   let best=0,run=0; for(let x=0;x<cw;x++){ if(cols[x]>0.5){ run++; best=Math.max(best,run);} else run=0; }
   return best>=Math.round(cw*0.25);
 }
+function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0)h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
 
-/* ---------- Analyze ---------- */
-const DB_KEY='phonebox_embeddings_v1';
-function loadDB(){ return JSON.parse(localStorage.getItem(DB_KEY)||'{}'); }
-function saveDB(db){ localStorage.setItem(DB_KEY, JSON.stringify(db)); }
+/* ========= Blue bar detection ========= */
+async function findBlueBars(imgEl, edgeCrop, sens){
+  const maxW=1400, r=Math.min(1, maxW/imgEl.naturalWidth);
+  const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
+  const {data}=g.getImageData(0,0,W,H);
 
-async function analyze(){
-  statusEl.textContent='Loading roster…';
-  roster=await loadRoster();
-  const boxSel=document.getElementById('boxSelect').value;
-  const namesBySlot=boxSel?rosterByBox(boxSel):{};
-  drawGrid(namesBySlot);
+  const hueMin=190, hueMax=265, sMin=0.28, vMin=0.18 + sens*0.35; // sensitivity raises vMin
+  const x0=Math.round(W*edgeCrop), x1=Math.round(W*(1-edgeCrop));
+  const frac=new Float32Array(H);
 
-  if(!currentImage) return alert('Please take or upload a photo.');
-  const cfg=boxConfig[boxSel||'AUTO']; if(!cfg || !cfg.roisDetect) return alert('Press “Auto-calibrate” (or “Show simple grid”).');
-
-  statusEl.textContent='Computing…';
-  const db=loadDB(); const records=[];
-  for(let i=0;i<cfg.roisDetect.length; i++){
-    const roi=cfg.roisDetect[i];
-    const canvas=cropToCanvas(currentImage, roi);
-    const occupied=slotOccupied(canvas);
-    const slot=i+1; const expectedName=namesBySlot[slot]||'';
-
-    let detectedId=null, similarity=0;
-    if(occupied){
-      const emb=await embedCanvas(canvas);
-      if(expectedName && db[expectedName]){ similarity=cosSim(emb,db[expectedName]); detectedId=expectedName; }
-      else{ let bestName=null, bestSim=-1; for(const [name,ref] of Object.entries(db)){ const s=cosSim(emb,ref); if(s>bestSim){bestSim=s; bestName=name;} } detectedId=bestName; similarity=bestSim; }
+  for(let y=0;y<H;y++){
+    let cnt=0, blue=0;
+    for(let x=x0;x<=x1;x+=2){
+      const i=(y*W+x)*4; const {h,s,v}=rgb2hsv(data[i],data[i+1],data[i+2]);
+      if((h>hueMin&&h<hueMax)&&s>=sMin&&v>=vMin) blue++; cnt++;
     }
-
-    let status='empty';
-    if(occupied && expectedName){ status = !db[expectedName] ? 'unknown (no reference yet)' : (similarity>0.80?'ok':'mismatch (possible fake)'); }
-    else if(occupied && !expectedName){ status='unexpected phone'; }
-    else if(!occupied && expectedName){ status='missing'; }
-
-    records.push({slot, expectedName, detectedId: occupied?(detectedId||'—'):'—', status});
+    frac[y]=cnt?blue/cnt:0;
   }
-
-  resultsBody.innerHTML='';
-  for(const r of records){
-    const tr=document.createElement('tr');
-    tr.className = r.status==='ok'?'ok':(r.status.includes('mismatch')?'mismatch':'');
-    tr.innerHTML=`<td>${r.slot}</td><td>${r.expectedName||''}</td><td>${r.detectedId||''}</td><td><span class="pill">${r.status}</span></td>`;
-    resultsBody.appendChild(tr);
+  const s = smooth(frac,7);
+  const peaks = topPeaks(s,5,Math.round(H/8));
+  const win=Math.round(H*0.035), tops=[];
+  for(const p of peaks){
+    let M=0; for(let y=Math.max(0,p-win); y<=Math.min(H-1,p+win); y++) M=Math.max(M,s[y]);
+    const T=M*0.5; let top=p;
+    for(let y=p;y>=0;y--){ if(s[y]>=T) top=y; else break; }
+    tops.push(top);
   }
-  lastRecords = records.map(r=>r);
-  drawOverlay();
-  statusEl.textContent='Done.';
+  return tops.sort((a,b)=>a-b).map(y=>Math.round(y/r));
 }
+function smooth(a,w){const o=new Float32Array(a.length); for(let i=0;i<a.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=a.length) continue; s+=a[j]; c++;} o[i]=s/c;} return o;}
+function topPeaks(s,count,minDist){const idx=[...s].map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]); const out=[]; for(const [,i] of idx){ if(out.every(j=>Math.abs(j-i)>minDist)) out.push(i); if(out.length>=count) break; } return out.sort((a,b)=>a-b);}
 
-/* ---------- OCR (optional) ---------- */
-async function autoDetectBox(){
-  if(!currentImage) return;
-  statusEl.textContent='Reading labels (OCR)…';
-  try{
-    const worker = await Tesseract.createWorker('eng');
-    const { data: { text } } = await worker.recognize(currentImage);
-    await worker.terminate();
-    const m = text.toUpperCase().match(/(SM\d|\d{1,2}[A-F])\s*-?\s*\d{1,2}/);
-    if(m){ document.getElementById('boxSelect').value=m[1]; drawGrid(rosterByBox(m[1])); statusEl.textContent=`Detected box: ${m[1]}`; }
-    else  { statusEl.textContent='Could not auto-detect a box; choose from the menu.'; }
-  }catch{ statusEl.textContent='OCR error (continuing).'; }
+/* ========= Row L/R detection ========= */
+async function findLRForRows(imgEl, tops, edgeCrop){
+  const maxW=1400; const r=Math.min(1, maxW/imgEl.naturalWidth);
+  const W=Math.round(imgEl.naturalWidth*r), H=Math.round(imgEl.naturalHeight*r);
+  const can=document.createElement('canvas'); can.width=W; can.height=H;
+  const g=can.getContext('2d'); g.drawImage(imgEl,0,0,W,H);
+  const im=g.getImageData(0,0,W,H);
+  const scaleX = imgEl.naturalWidth/W;
+
+  const gaps=[]; for(let i=1;i<tops.length;i++) gaps.push((tops[i]-tops[i-1])*r);
+  const avgGap = gaps.reduce((a,b)=>a+b,0)/gaps.length || H/5;
+  const bandH = Math.max(6, Math.round(avgGap*0.22));
+
+  const out=[];
+  for(const yBig of tops){
+    const ySm = Math.max(0, Math.round(yBig*r));
+    const col = blueAmountByColumn(im, ySm+1, Math.min(H-1, ySm+bandH));
+    const [L,R]=largestRun(col, Math.round(W*edgeCrop));
+    out.push([ Math.round(L*scaleX), Math.round(R*scaleX) ]);
+  }
+  return out;
 }
+function blueAmountByColumn(im, y0,y1){
+  const {data,width:W}=im; const col=new Float32Array(W).fill(0);
+  for(let x=0;x<W;x++){
+    let s=0; for(let y=y0;y<=y1;y++){
+      const i=(y*W+x)*4; const {h,s:S,v}=rgb2hsv(data[i],data[i+1],data[i+2]);
+      if((h>190&&h<265)&&S>=0.28&&v>=0.22) s++;
+    }
+    col[x]=s;
+  }
+  return smooth(col,6);
+}
+function largestRun(col, pad){
+  const W=col.length, L=pad, R=W-pad-1;
+  const thr = quantile([...col].slice(L,R+1), 0.55);
+  const mask=new Uint8Array(W);
+  for(let x=L;x<=R;x++) mask[x]=col[x]>=thr?1:0;
+  let best=[L,R], width=0, s=null;
+  for(let x=L;x<=R;x++){
+    if(mask[x] && s===null) s=x;
+    if((!mask[x] || x===R) && s!==null){
+      const e = (!mask[x] && x> L) ? x-1 : x;
+      const w=e-s; if(w>width){width=w; best=[s,e];}
+      s=null;
+    }
+  }
+  return best;
+}
+function quantile(a,q){const b=[...a].sort((x,y)=>x-y); const i=Math.max(0,Math.min(b.length-1,Math.floor(q*(b.length-1)))); return b[i];}
 
-/* ---------- Wire up ---------- */
-document.getElementById('analyzeBtn').addEventListener('click', analyze);
-document.getElementById('saveEmbeddingBtn').addEventListener('click', async ()=>{
-  if(!currentImage) return alert('Take/upload a photo first.');
-  roster=await loadRoster();
-  const boxSel=document.getElementById('boxSelect').value;
-  const cfg=boxConfig[boxSel||'AUTO']; if(!cfg || !cfg.roisDetect) return alert('Calibrate first.');
-  const namesBySlot=rosterByBox(boxSel);
-  const db=loadDB();
-  for(let i=0;i<cfg.roisDetect.length;i++){ const slot=i+1; const name=namesBySlot[slot]; if(!name) continue; const canvas=cropToCanvas(currentImage, cfg.roisDetect[i]); const emb=await embedCanvas(canvas); db[name]=emb; }
-  saveDB(db); alert('Saved embeddings for the visible phones in this photo.');
-});
-document.getElementById('boxSelect').addEventListener('change', async ()=>{
-  roster=await loadRoster(); const id=document.getElementById('boxSelect').value; drawGrid(rosterByBox(id)); drawOverlay();
-});
-document.getElementById('photo').addEventListener('change', ()=>setTimeout(autoDetectBox,300));
-(function init(){ const saved=localStorage.getItem('phonebox_config'); if(saved) boxConfig=JSON.parse(saved); drawGrid(); })();
+/* ========= Bounds helper ========= */
+function equalBounds(L,R,n){ const step=(R-L)/n; const b=[Math.round(L)]; for(let i=1;i<n;i++) b.push(Math.round(L+i*step)); b.push(Math.round(R)); return b; }
 </script>
 </body>
 </html>
