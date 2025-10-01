@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box • 12 Slots / Row (Manual 7-tap)</title>
+<title>Phone Box • 12 Slots / Row (7-tap align + robust detector)</title>
 <style>
   :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0}
   *{box-sizing:border-box}
@@ -41,7 +41,7 @@
 </style>
 </head>
 <body>
-<header>📱 Phone Box — 7-tap alignment: 2 taps (global L/R) + 5 taps (row bottoms). 12 slots/row.</header>
+<header>📱 Phone Box — 7-tap align (Left, Right, then 5 rows). 12 slots/row. Robust phone detector.</header>
 
 <main>
   <section class="card">
@@ -107,7 +107,7 @@ const showGuidesEl=document.getElementById('showGuides');
 /* ===== state ===== */
 let current=null; // {image,W,H}
 let roster=[];
-let Lx=null, Rx=null;     // global left/right x for number strips
+let Lx=null, Rx=null;     // global L/R ends of the number strip
 let rowBottoms=new Array(ROWS).fill(null); // y per row (tap on blue bar)
 let walls=[];             // 13 global walls (same for all rows)
 let rois=[];              // 60 rects
@@ -192,7 +192,7 @@ startBtn.addEventListener('click', ()=>{
   if(!current) return alert('Upload a photo first.');
   resetAlignment();
   mode='tapL';
-  setStatus('Tap the LEFT end of ANY blue number strip (near “1”).');
+  setStatus('Tap the LEFT end of any blue number strip (near “1”).');
 });
 resetBtn.addEventListener('click', ()=>{ resetAll(); setStatus('Reset. Tap “Start 7-tap Align”.'); });
 
@@ -212,13 +212,13 @@ stage.addEventListener('pointerdown', e=>{
     // build global 13 walls from Lx..Rx
     walls = Array.from({length:SLOTS_PER_ROW+1},(_,k)=>Math.round(Lx + k*(Rx-Lx)/SLOTS_PER_ROW));
     mode='tapRows'; tapRowIndex=0;
-    setStatus('Now tap ON each blue strip (bottom of row), top→bottom: Row 1.');
+    setStatus('Now tap ON each blue strip (row bottom), top→bottom: Row 1.');
     draw();
   }else if(mode==='tapRows'){
     rowBottoms[tapRowIndex]=Math.max(0,Math.min(current.H-1, Math.round(y)));
     tapRowIndex++;
     if(tapRowIndex<ROWS){
-      setStatus(`Row ${tapRowIndex} set. Tap on Row ${tapRowIndex+1} blue strip.`);
+      setStatus(`Row ${tapRowIndex} set. Tap Row ${tapRowIndex+1}.`);
     }else{
       mode='idle';
       buildROIsFrom7Taps();
@@ -231,7 +231,7 @@ stage.addEventListener('pointerdown', e=>{
 
 analyzeBtn.addEventListener('click', ()=>{
   if(rois.length!==TOTAL_SLOTS){
-    alert('Alignment incomplete. Tap Start and perform the 7 taps (L, R, and 5 rows).');
+    alert('Alignment incomplete. Do the 7 taps (Left, Right, then 5 rows).');
     return;
   }
   occMask = rois.map(r => slotOccupied(cropROI(r)));
@@ -253,7 +253,7 @@ analyzeBtn.addEventListener('click', ()=>{
 /* ===== build ROIs from 7 taps ===== */
 function buildROIsFrom7Taps(){
   rois=[];
-  // derive gap per row to size rectangles (70% of gap up to next strip; last row uses average)
+  // derive gap per row to size rectangles (70% of gap up to next strip; last row → average)
   const ys=rowBottoms.slice().sort((a,b)=>a-b);
   const gaps=[]; for(let i=1;i<ys.length;i++) gaps.push(ys[i]-ys[i-1]);
   const avg=gaps.length?gaps.reduce((a,b)=>a+b,0)/gaps.length: Math.round(current.H/6);
@@ -270,18 +270,85 @@ function buildROIsFrom7Taps(){
   }
 }
 
-/* ===== occupancy detection ===== */
+/* ===== occupancy detection (robust 2-of-3 vote) ===== */
 function cropROI(r){ const c=document.createElement('canvas'); c.width=r.w; c.height=r.h; c.getContext('2d').drawImage(current.image,r.x,r.y,r.w,r.h,0,0,r.w,r.h); return c; }
-function slotOccupied(c){
-  const k=c.getContext('2d');
-  const cx=Math.round(c.width*0.18), cw=Math.round(c.width*0.64);
-  const cy=Math.round(c.height*0.15), ch=Math.round(c.height*0.60);
-  const {data}=k.getImageData(cx,cy,cw,ch);
-  const cols=new Float32Array(cw).fill(0); const dark=130;
-  for(let y=0;y<ch;y++){ for(let x=0;x<cw;x++){ const i=(y*cw+x)*4; const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; if(L<dark) cols[x]++; } }
-  for(let x=0;x<cw;x++) cols[x]/=ch;
-  let best=0,run=0; for(let x=0;x<cw;x++){ if(cols[x]>0.45){ run++; best=Math.max(best,run);} else run=0; }
-  return best>=Math.round(cw*0.22);
+
+// --- pasteable robust detector ---
+function slotOccupied(c) {
+  const k = c.getContext('2d');
+
+  // Focus on center area of slot.
+  const cx = Math.round(c.width * 0.20),
+        cw = Math.round(c.width * 0.60);
+  const cy = Math.round(c.height * 0.17),
+        ch = Math.round(c.height * 0.65);
+
+  const img = k.getImageData(cx, cy, cw, ch);
+  const d = img.data;
+
+  // 1) DARK FRACTION
+  const DARK_L = 128;  // adjust 118–138 if foam darker/brighter
+  let darkCnt = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const L = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+    if (L < DARK_L) darkCnt++;
+  }
+  const darkFrac = darkCnt / (d.length/4);
+
+  // 2) VERTICAL EDGE ENERGY (Sobel)
+  const {edgeFrac, gradMean} = sobelEnergy(img);
+
+  // 3) PORT BAND DARKNESS
+  const pbY  = cy + Math.round(ch * 0.60);
+  const pbH  = Math.max(4, Math.round(ch * 0.18));
+  const pbX  = cx + Math.round(cw * 0.35);
+  const pbW  = Math.max(8, Math.round(cw * 0.30));
+  const pb   = k.getImageData(pbX, pbY, pbW, pbH).data;
+  let pbDark = 0;
+  for (let i = 0; i < pb.length; i += 4) {
+    const L = 0.299*pb[i] + 0.587*pb[i+1] + 0.114*pb[i+2];
+    if (L < (DARK_L - 10)) pbDark++;
+  }
+  const portDarkFrac = pbDark / (pb.length/4);
+
+  // thresholds
+  const DARK_FRAC_MIN   = 0.22;
+  const EDGE_FRAC_MIN   = 0.14;
+  const GRAD_MEAN_MIN   = 22;
+  const PORT_FRAC_MIN   = 0.18;
+
+  const voteDark = darkFrac >= DARK_FRAC_MIN;
+  const voteEdge = (edgeFrac >= EDGE_FRAC_MIN) && (gradMean >= GRAD_MEAN_MIN);
+  const votePort = portDarkFrac >= PORT_FRAC_MIN;
+
+  const votes = (voteDark?1:0) + (voteEdge?1:0) + (votePort?1:0);
+
+  return votes >= 2;
+}
+
+// Sobel helper
+function sobelEnergy(imgData) {
+  const w = imgData.width, h = imgData.height, d = imgData.data;
+  const gray = new Uint8Array(w*h);
+  for (let y=0, i=0, j=0; y<h; y++) {
+    for (let x=0; x<w; x++, i+=4, j++) {
+      gray[j] = (0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2])|0;
+    }
+  }
+  let strong=0, sum=0, cnt=0;
+  for (let y=1; y<h-1; y++) {
+    for (let x=1; x<w-1; x++) {
+      const p = y*w + x;
+      const gx = -gray[p-w-1] -2*gray[p-1] -gray[p+w-1] + gray[p-w+1] +2*gray[p+1] +gray[p+w+1];
+      const gy = -gray[p-w-1] -2*gray[p-w] -gray[p-w+1] + gray[p+w-1] +2*gray[p+w] +gray[p+w+1];
+      const mag = Math.hypot(gx, gy);
+      sum += mag; cnt++;
+      if (mag > 90) strong++;
+    }
+  }
+  const edgeFrac = strong / Math.max(1,cnt);
+  const gradMean = sum / Math.max(1,cnt);
+  return { edgeFrac, gradMean };
 }
 
 /* ===== drawing ===== */
@@ -299,7 +366,7 @@ function draw(){
     if(Number.isFinite(Lx)){ ctx.beginPath(); ctx.moveTo(Lx,0); ctx.lineTo(Lx,Math.min(current.H,40)); ctx.stroke(); }
     if(Number.isFinite(Rx)){ ctx.beginPath(); ctx.moveTo(Rx,0); ctx.lineTo(Rx,Math.min(current.H,40)); ctx.stroke(); }
   }
-  // walls (short hash near top of image just for sanity)
+  // walls (short hash near top just as a sanity marker)
   if(showGuidesEl.checked && walls.length===SLOTS_PER_ROW+1){
     ctx.strokeStyle='rgba(255,255,255,.7)'; ctx.lineWidth=2/(window.devicePixelRatio||1);
     for(const x of walls){ ctx.beginPath(); ctx.moveTo(x,10); ctx.lineTo(x,26); ctx.stroke(); }
