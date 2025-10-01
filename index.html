@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box • 12 Slots / Row (7-tap + adaptive detector)</title>
+<title>Phone Box • 12 Slots / Row (7-tap + cap detector)</title>
 <style>
   :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0}
   *{box-sizing:border-box}
@@ -41,7 +41,7 @@
 </style>
 </head>
 <body>
-<header>📱 Phone Box — 7 taps (Left, Right, then 5 rows). 12 slots/row. Adaptive phone detector.</header>
+<header>📱 Phone Box — 7 taps (Left, Right, then 5 rows). 12 slots/row. “Cap” detector for phones slid into foam.</header>
 
 <main>
   <section class="card">
@@ -261,7 +261,7 @@ function buildROIsFrom7Taps(){
   for(let r=0;r<ROWS;r++){
     const yB=rowBottoms[r];
     const gap = (r<ROWS-1? rowBottoms[r+1]-rowBottoms[r] : avg);
-    const h   = Math.max(12, Math.round(gap*0.70));
+    const h   = Math.max(12, Math.round(gap*0.70));   // height of area above numbers
     const yT  = Math.max(0, yB - h);
     for(let i=0;i<SLOTS_PER_ROW;i++){
       const x0=walls[i], x1=walls[i+1];
@@ -270,74 +270,70 @@ function buildROIsFrom7Taps(){
   }
 }
 
-/* ===== occupancy detection (adaptive 2-of-3 vote) ===== */
+/* ===== occupancy detection — CAP FOCUS ===== */
 function cropROI(r){ const c=document.createElement('canvas'); c.width=r.w; c.height=r.h; c.getContext('2d').drawImage(current.image,r.x,r.y,r.w,r.h,0,0,r.w,r.h); return c; }
 
 function slotOccupied(c) {
   const k = c.getContext('2d');
 
-  // Slot ROI (center area)
-  const cx = Math.round(c.width * 0.18),  cw = Math.round(c.width * 0.64);
-  const cy = Math.round(c.height * 0.15), ch = Math.round(c.height * 0.62);
+  // We expect to see the phone CAP across the upper part of the slot.
+  const capTop = 0.06, capHeight = 0.45;  // fraction of ROI height
+  const cx = Math.round(c.width * 0.10),   // allow a little gutter
+        cw = Math.round(c.width * 0.80);
+  const cy = Math.round(c.height * capTop),
+        ch = Math.round(c.height * capHeight);
 
-  // Foam reference: top band + side gutters (avoid center where phone lives)
-  const refTopH  = Math.max(6, Math.round(ch * 0.18));
-  const refGutW  = Math.max(6, Math.round(cw * 0.12));
-  const refTop   = k.getImageData(cx, cy, cw, refTopH).data;
-  const refLeft  = k.getImageData(cx, cy, refGutW, ch).data;
-  const refRight = k.getImageData(cx + cw - refGutW, cy, refGutW, ch).data;
+  // Local foam baseline from a thin band just ABOVE the cap band + outer side gutters.
+  const refTopH = Math.max(4, Math.round(c.height * 0.10));
+  const refTop  = k.getImageData(cx, 0, cw, refTopH).data;
+  const refGutW = Math.max(5, Math.round(c.width * 0.10));
+  const refLeft = k.getImageData(0, cy, refGutW, ch).data;
+  const refRight= k.getImageData(c.width - refGutW, cy, refGutW, ch).data;
 
   const stats = (data) => {
-    let sum=0, sum2=0, n=0;
-    for (let i=0;i<data.length;i+=4) { const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; sum+=L; sum2+=L*L; n++; }
-    const mean=sum/n, std=Math.sqrt(Math.max(0, sum2/n - mean*mean));
-    return {mean, std};
+    let s=0,s2=0,n=0;
+    for(let i=0;i<data.length;i+=4){ const L=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]; s+=L; s2+=L*L; n++; }
+    const mean=s/n, std=Math.sqrt(Math.max(0, s2/n - mean*mean));
+    return {mean,std};
   };
-
   const r1=stats(refTop), r2=stats(refLeft), r3=stats(refRight);
-  const foamMean = (r1.mean + r2.mean + r3.mean)/3;
-  const foamStd  = Math.max(6, (r1.std + r2.std + r3.std)/3); // floor to avoid zero in flat light
+  const foamMean=(r1.mean+r2.mean+r3.mean)/3, foamStd=Math.max(6,(r1.std+r2.std+r3.std)/3);
 
-  // Slot center image
+  // Slot CAP region
   const roi = k.getImageData(cx, cy, cw, ch);
   const d = roi.data;
 
-  // 1) DARKNESS vs local foam baseline
-  const kStd = 1.1;                 // sensitivity to variance
-  const margin = 10;                // absolute offset
-  const darkThresh = foamMean - kStd*foamStd - margin;
-  let darkCnt=0, sumL=0, nPix=d.length/4;
-  for (let i=0;i<d.length;i+=4) {
-    const L=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-    if (L < darkThresh) darkCnt++;
-    sumL += L;
-  }
-  const darkFrac = darkCnt / nPix;
-  const roiMean  = sumL / nPix;
-  const meanDrop = foamMean - roiMean; // overall darker than foam
+  // ----- CAP heuristic -----
+  // Many columns across the cap should be darker than foam by a margin.
+  const CAP_DARK_DROP = 10;     // mean drop vs foam to call a pixel "cap-dark"
+  const CAP_COL_MIN   = 0.40;   // within a column, ≥40% pixels dark → that column is "filled"
+  const CAP_SPAN_MIN  = 0.55;   // across columns, ≥55% columns filled → present
 
-  // 2) EDGE ENERGY (Sobel)
+  const darkThr = foamMean - 1.0*foamStd - CAP_DARK_DROP;
+
+  const filledCols = [];
+  const w = cw, h = ch;
+  for(let x=0;x<w;x++){
+    let colDark=0;
+    for(let y=0;y<h;y++){
+      const i=(y*w+x)*4;
+      const L=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      if(L < darkThr) colDark++;
+    }
+    const frac = colDark / h;
+    filledCols.push(frac >= CAP_COL_MIN ? 1 : 0);
+  }
+  // smooth little gaps (1-column holes)
+  for(let x=1;x<w-1;x++){ if(!filledCols[x] && filledCols[x-1] && filledCols[x+1]) filledCols[x]=1; }
+
+  const span = filledCols.reduce((a,b)=>a+b,0) / w;
+
+  // As a tie-breaker, look for edges in the cap (ports/curves give edges).
   const {edgeFrac, gradMean} = sobelEnergy(roi);
+  const EDGE_OK = (edgeFrac >= 0.12) && (gradMean >= 18);
 
-  // 3) PORT BAND DARKNESS (bottom-center)
-  const pbY  = cy + Math.round(ch * 0.60);
-  const pbH  = Math.max(4, Math.round(ch * 0.18));
-  const pbX  = cx + Math.round(cw * 0.35);
-  const pbW  = Math.max(8, Math.round(cw * 0.30));
-  const pb   = k.getImageData(pbX, pbY, pbW, pbH).data;
-  let pbDark=0; for (let i=0;i<pb.length;i+=4){
-    const L=0.299*pb[i]+0.587*pb[i+1]+0.114*pb[i+2];
-    if (L < (foamMean - 0.6*foamStd - 6)) pbDark++;
-  }
-  const portDarkFrac = pbDark / (pb.length/4);
-
-  // votes (adaptive thresholds)
-  const VOTE_DARK      = (darkFrac >= 0.22) || (meanDrop >= 12);
-  const VOTE_EDGE      = (edgeFrac >= 0.15) && (gradMean >= 22);
-  const VOTE_PORT      = (portDarkFrac >= 0.18);
-
-  const votes = (VOTE_DARK?1:0) + (VOTE_EDGE?1:0) + (VOTE_PORT?1:0);
-  return votes >= 2;
+  // Final decision
+  return (span >= CAP_SPAN_MIN) || (span >= 0.45 && EDGE_OK);
 }
 
 // Sobel helper on ImageData (RGBA)
