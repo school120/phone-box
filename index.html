@@ -3,28 +3,25 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box • 12 Slots / Row (Above Numbers)</title>
+<title>Phone Box • 12 Slots / Row (Manual 7-tap)</title>
 <style>
   :root{--bg:#0b1020;--card:#11183a;--muted:#9ab0e0}
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;background:var(--bg);color:#fff;font-family:system-ui,-apple-system,Inter,Roboto,Segoe UI}
   header{padding:14px 16px;border-bottom:1px solid #ffffff1a;font-weight:800}
-  main{max-width:1200px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1.08fr 0.92fr;gap:16px}
+  main{max-width:1200px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1.06fr .94fr;gap:16px}
   .card{background:#11183a;border:1px solid #ffffff1a;border-radius:16px;padding:14px}
   label{display:block;margin:10px 0 6px;color:var(--muted);font-size:14px}
   input[type="file"],select,button{width:100%;padding:14px 16px;border-radius:12px;border:1px solid #ffffff2b;background:#0f1738;color:#fff;font-size:16px}
   button.primary{background:linear-gradient(180deg,#3bc2f2,#1aa1d9);border:none;font-weight:800}
   small{color:var(--muted)}
-  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  .pill{display:inline-block;padding:.2rem .6rem;border-radius:999px;background:#ffffff24;font-size:12px}
 
-  /* Preview */
   #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0c1333;min-height:240px;touch-action:none}
   #img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;z-index:0}
   #overlay{position:absolute;inset:0;pointer-events:none;z-index:1}
-
-  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
-  .pill{display:inline-block;padding:.2rem .6rem;border-radius:999px;background:#ffffff24;font-size:12px}
 
   .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:6px;margin:10px 0}
   .slot{background:#0f1738;border:1px solid #ffffff24;aspect-ratio:3/5;border-radius:8px;position:relative}
@@ -40,21 +37,20 @@
   @media (max-width: 900px){
     main{grid-template-columns:1fr}
     header{font-size:18px}
-    .row{grid-template-columns:1fr}
   }
 </style>
 </head>
 <body>
-<header>📱 Phone Box — 12 rectangles per row, directly above the printed numbers</header>
+<header>📱 Phone Box — 7-tap alignment: 2 taps (global L/R) + 5 taps (row bottoms). 12 slots/row.</header>
 
 <main>
-  <section class="card" id="left">
+  <section class="card">
     <div id="stage">
       <img id="img" alt="preview">
       <canvas id="overlay"></canvas>
     </div>
     <div class="toolbar">
-      <span class="pill" id="status"></span>
+      <span class="pill" id="status">Upload a photo to begin.</span>
     </div>
     <div class="grid" id="boxGrid"></div>
     <table>
@@ -68,7 +64,7 @@
     <select id="box"></select>
 
     <label style="margin-top:10px">Roster CSV (auto-loads /data/roster.csv)</label>
-    <div class="row" style="align-items:end">
+    <div style="display:flex; gap:8px; align-items:center">
       <small id="rosterStatus">Loading…</small>
       <input id="rosterFile" type="file" accept=".csv">
     </div>
@@ -76,34 +72,11 @@
     <label style="margin-top:10px">Upload a box photo</label>
     <input id="photo" type="file" accept="image/*" capture="environment">
 
-    <div class="row" style="margin-top:10px">
-      <div>
-        <label>Edge crop % (ignore left/right)</label>
-        <input id="edgePct" type="range" min="0" max="15" step="1" value="4">
-      </div>
-      <div>
-        <label>Blue sensitivity (for Auto)</label>
-        <input id="blueSens" type="range" min="10" max="90" step="5" value="45">
-      </div>
-    </div>
-
-    <div class="row" style="margin-top:10px">
-      <div>
-        <label>Row height % of gap</label>
-        <input id="rowPct" type="range" min="50" max="90" step="5" value="70">
-      </div>
-      <div>
-        <label>Guide opacity</label>
-        <input id="guideAlpha" type="range" min="20" max="100" step="5" value="90">
-      </div>
-    </div>
-
     <div class="toolbar">
-      <button id="guided" class="primary">Guided Align (tap L & R on each strip)</button>
-      <button id="auto">Auto Align</button>
-      <button id="resetRows">Reset</button>
+      <button id="start" class="primary">Start 7-tap Align</button>
+      <button id="reset">Reset</button>
       <button id="analyze" disabled>Analyze (Green/Red)</button>
-      <label style="margin-left:8px"><input id="showGuides" type="checkbox" checked> Show guides</label>
+      <label><input id="showGuides" type="checkbox" checked> Show guides</label>
     </div>
   </section>
 </main>
@@ -126,31 +99,23 @@ const rosterFile=document.getElementById('rosterFile');
 const rosterStatus=document.getElementById('rosterStatus');
 
 const photo=document.getElementById('photo');
-const guidedBtn=document.getElementById('guided');
-const autoBtn=document.getElementById('auto');
-const resetBtn=document.getElementById('resetRows');
+const startBtn=document.getElementById('start');
+const resetBtn=document.getElementById('reset');
 const analyzeBtn=document.getElementById('analyze');
 const showGuidesEl=document.getElementById('showGuides');
-
-const edgePctEl=document.getElementById('edgePct');
-const blueSensEl=document.getElementById('blueSens');
-const rowPctEl=document.getElementById('rowPct');
-
-const edgeCrop=()=>+edgePctEl.value/100;
-const blueSens=()=>+blueSensEl.value/100;
-const rowFrac=()=>+rowPctEl.value/100;
-const setStatus=t=>statusEl.textContent=t||'';
 
 /* ===== state ===== */
 let current=null; // {image,W,H}
 let roster=[];
-let rowBottoms=[];       // y (full-res) of top of blue band (row bottom)
-let rowLR=[];            // per row: {xL,xR} (guided OR auto)
-let wallsByRow=[];       // per row: 13 x's
-let rois=[];             // 60 rects
+let Lx=null, Rx=null;     // global left/right x for number strips
+let rowBottoms=new Array(ROWS).fill(null); // y per row (tap on blue bar)
+let walls=[];             // 13 global walls (same for all rows)
+let rois=[];              // 60 rects
 let occMask=[];
-let guidedStep=null;     // {row:0..4, phase:'L'|'R'}
-let view={W:0,H:0,scale:1,dx:0,dy:0,dpr:1};
+let mode='idle';          // 'idle'|'tapL'|'tapR'|'tapRows'
+let tapRowIndex=0;
+
+const setStatus = t => statusEl.textContent=t||'';
 
 /* ===== boxes ===== */
 (function fillBoxes(){
@@ -198,11 +163,11 @@ function namesForBox(boxId){
   return out;
 }
 
-/* ===== image loading & sizing ===== */
+/* ===== image load & overlay sizing ===== */
 photo.addEventListener('change', e=>{
   const f=e.target.files[0]; if(!f) return;
   const url=URL.createObjectURL(f); const im=new Image();
-  im.onload=()=>{ current={image:im,W:im.naturalWidth,H:im.naturalHeight}; img.src=url; img.style.display='block'; sizeStage(); resetAll(); setStatus('Photo loaded. Choose Guided or Auto.'); };
+  im.onload=()=>{ current={image:im,W:im.naturalWidth,H:im.naturalHeight}; img.src=url; img.style.display='block'; sizeStage(); resetAll(); setStatus('Photo loaded. Tap “Start 7-tap Align”.'); };
   im.onerror=()=>setStatus('Could not load image.'); im.src=url;
 });
 window.addEventListener('resize', sizeStage);
@@ -216,165 +181,96 @@ function sizeStage(){
   overlay.style.height=stageH+'px';
   overlay.width=Math.round(stageW*dpr);
   overlay.height=Math.round(stageH*dpr);
-
-  // render transform: scale so that image fills stage exactly (same aspect ratio we set)
+  // draw in image pixels scaled to fit width
   const scale = stageW/current.W;
-  const dx=0, dy=0;
-  ctx.setTransform(dpr*scale,0,0,dpr*scale,dpr*dx,dpr*dy);
-  view={W:stageW,H:stageH,scale,dx,dy,dpr};
+  ctx.setTransform(dpr*scale,0,0,dpr*scale,0,0);
   draw();
 }
-function imgToScreen(x,y){ return {x:view.dx + x*view.scale, y:view.dy + y*view.scale}; }
-function screenToImage(cx,cy){
-  const rect=overlay.getBoundingClientRect();
-  const xCss = cx-rect.left, yCss = cy-rect.top;
-  const x = (xCss/view.scale), y=(yCss/view.scale);
-  return {ix:Math.max(0,Math.min(current.W,x)), iy:Math.max(0,Math.min(current.H,y))};
-}
 
-/* ===== reset ===== */
-function resetAll(){
-  rowBottoms=[]; rowLR=[]; wallsByRow=[]; rois=[]; occMask=[];
-  guidedStep=null; draw(); analyzeBtn.disabled=true;
-}
-
-/* ===== GUIDED ALIGN ===== */
-guidedBtn.addEventListener('click', ()=>{
+/* ===== interaction ===== */
+startBtn.addEventListener('click', ()=>{
   if(!current) return alert('Upload a photo first.');
-  resetAll();
-  guidedStep={row:0, phase:'L'}; setStatus('Tap LEFT edge of blue strip for row 1 (near slot 1).');
+  resetAlignment();
+  mode='tapL';
+  setStatus('Tap the LEFT end of ANY blue number strip (near “1”).');
 });
+resetBtn.addEventListener('click', ()=>{ resetAll(); setStatus('Reset. Tap “Start 7-tap Align”.'); });
+
 stage.addEventListener('pointerdown', e=>{
-  if(!guidedStep||!current) return;
-  const {ix,iy}=screenToImage(e.clientX,e.clientY);
-  if(guidedStep.phase==='L'){
-    // first tap for this row → set row bottom to y, set xL
-    rowBottoms[guidedStep.row]=iy|0;
-    rowLR[guidedStep.row]={xL:ix|0,xR:null};
-    guidedStep.phase='R';
-    setStatus(`Row ${guidedStep.row+1}: now tap RIGHT edge of blue strip (near slot 12).`);
-  }else{
-    rowLR[guidedStep.row].xR=ix|0;
-    // enforce L<R and apply edge crop
-    const L0=Math.min(rowLR[guidedStep.row].xL,rowLR[guidedStep.row].xR);
-    const R0=Math.max(rowLR[guidedStep.row].xL,rowLR[guidedStep.row].xR);
-    const pad = Math.round((R0-L0)*0.01);
-    rowLR[guidedStep.row].xL=L0+pad; rowLR[guidedStep.row].xR=R0-pad;
+  if(!current) return;
+  const rect=overlay.getBoundingClientRect();
+  const x=(e.clientX-rect.left)/(overlay.width/(window.devicePixelRatio||1)) * current.W;
+  const y=(e.clientY-rect.top )/(overlay.height/(window.devicePixelRatio||1)) * current.H;
 
-    // compute walls for this row
-    wallsByRow[guidedStep.row] = equalWalls(rowLR[guidedStep.row].xL,rowLR[guidedStep.row].xR);
+  if(mode==='tapL'){
+    Lx=Math.max(0,Math.min(current.W-2, Math.round(x)));
+    mode='tapR';
+    setStatus('Now tap the RIGHT end of the blue strip (near “12”).');
     draw();
-
-    // next row or finish
-    if(guidedStep.row < ROWS-1){
-      guidedStep={row:guidedStep.row+1, phase:'L'};
-      setStatus(`Tap LEFT edge of blue strip for row ${guidedStep.row+1}.`);
+  }else if(mode==='tapR'){
+    Rx=Math.max(Lx+10, Math.min(current.W-1, Math.round(x)));
+    // build global 13 walls from Lx..Rx
+    walls = Array.from({length:SLOTS_PER_ROW+1},(_,k)=>Math.round(Lx + k*(Rx-Lx)/SLOTS_PER_ROW));
+    mode='tapRows'; tapRowIndex=0;
+    setStatus('Now tap ON each blue strip (bottom of row), top→bottom: Row 1.');
+    draw();
+  }else if(mode==='tapRows'){
+    rowBottoms[tapRowIndex]=Math.max(0,Math.min(current.H-1, Math.round(y)));
+    tapRowIndex++;
+    if(tapRowIndex<ROWS){
+      setStatus(`Row ${tapRowIndex} set. Tap on Row ${tapRowIndex+1} blue strip.`);
     }else{
-      guidedStep=null;
-      buildROIsFromGuided();
+      mode='idle';
+      buildROIsFrom7Taps();
       analyzeBtn.disabled=false;
-      setStatus('Aligned (Guided). Tap “Analyze”.');
+      setStatus('Aligned. Tap “Analyze (Green/Red)”.');
     }
+    draw();
   }
 });
-function equalWalls(xL,xR){
-  const per=(xR-xL)/SLOTS_PER_ROW;
-  const w = Array.from({length:SLOTS_PER_ROW+1},(_,k)=>Math.round(xL+k*per));
-  for(let i=1;i<w.length;i++) if(w[i]<=w[i-1]) w[i]=w[i-1]+1;
-  return w;
-}
-function buildROIsFromGuided(){
-  // estimate vertical gaps from tapped bottoms
-  const sorted=rowBottoms.slice(0).sort((a,b)=>a-b);
-  const gaps=[]; for(let i=1;i<sorted.length;i++) gaps.push(sorted[i]-sorted[i-1]);
-  const avgGap=gaps.length?gaps.reduce((a,b)=>a+b,0)/gaps.length: Math.round(current.H/6);
+
+analyzeBtn.addEventListener('click', ()=>{
+  if(rois.length!==TOTAL_SLOTS){
+    alert('Alignment incomplete. Tap Start and perform the 7 taps (L, R, and 5 rows).');
+    return;
+  }
+  occMask = rois.map(r => slotOccupied(cropROI(r)));
+  paintOverlay();
+  const names = namesForBox(boxSel.value||'');
+  resultsBody.innerHTML='';
+  for(let i=0;i<TOTAL_SLOTS;i++){
+    const slot=i+1, expected=names[slot]||'';
+    const status = occMask[i] ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
+    const tr=document.createElement('tr');
+    tr.className = status==='missing'?'missing':(status==='present'?'ok':'');
+    tr.innerHTML=`<td>${slot}</td><td>${expected}</td><td><span class="pill">${status}</span></td>`;
+    resultsBody.appendChild(tr);
+  }
+  [...boxGrid.children].forEach((d,i)=>{ d.classList.toggle('present',!!occMask[i]); d.classList.toggle('empty',!occMask[i]); });
+  setStatus('Done: green=phone, red=empty.');
+});
+
+/* ===== build ROIs from 7 taps ===== */
+function buildROIsFrom7Taps(){
   rois=[];
+  // derive gap per row to size rectangles (70% of gap up to next strip; last row uses average)
+  const ys=rowBottoms.slice().sort((a,b)=>a-b);
+  const gaps=[]; for(let i=1;i<ys.length;i++) gaps.push(ys[i]-ys[i-1]);
+  const avg=gaps.length?gaps.reduce((a,b)=>a+b,0)/gaps.length: Math.round(current.H/6);
+
   for(let r=0;r<ROWS;r++){
     const yB=rowBottoms[r];
-    const gap = (r<ROWS-1 && rowBottoms[r+1]) ? (rowBottoms[r+1]-rowBottoms[r]) : avgGap;
-    const h = Math.max(12, Math.round(gap*rowFrac()));
-    const yT = Math.max(0, yB - h);
-    const W=wallsByRow[r];
+    const gap = (r<ROWS-1? rowBottoms[r+1]-rowBottoms[r] : avg);
+    const h   = Math.max(12, Math.round(gap*0.70));
+    const yT  = Math.max(0, yB - h);
     for(let i=0;i<SLOTS_PER_ROW;i++){
-      const x0=W[i], x1=W[i+1]; rois.push({x:x0,y:yT,w:x1-x0,h:yB-yT,row:r,col:i});
+      const x0=walls[i], x1=walls[i+1];
+      rois.push({x:x0,y:yT,w:Math.max(1,x1-x0),h:yB-yT,row:r,col:i});
     }
   }
 }
 
-/* ===== AUTO ALIGN (optional) ===== */
-autoBtn.addEventListener('click', async ()=>{
-  if(!current) return alert('Upload a photo first.');
-  resetAll(); setStatus('Auto: detecting blue strips…');
-  rowBottoms = await detectBlueStrips(current.image, edgeCrop(), blueSens());
-  if(rowBottoms.length!==ROWS){ setStatus('Auto failed. Use Guided Align (two taps per row).'); draw(); return; }
-  // find interior for each row & split
-  for(const yB of rowBottoms){ rowLR.push(await bandInterior(current.image, yB, edgeCrop(), blueSens())); }
-  for(let r=0;r<ROWS;r++){ const {xL,xR}=rowLR[r]; wallsByRow[r]=equalWalls(xL,xR); }
-  // build rois using auto bottoms
-  const gaps=[]; for(let i=1;i<rowBottoms.length;i++) gaps.push(rowBottoms[i]-rowBottoms[i-1]);
-  const avgGap=gaps.length?gaps.reduce((a,b)=>a+b,0)/gaps.length:Math.round(current.H/6);
-  rois=[];
-  for(let r=0;r<ROWS;r++){
-    const yB=rowBottoms[r];
-    const gap=(r<ROWS-1?rowBottoms[r+1]-rowBottoms[r]:avgGap);
-    const h=Math.max(12,Math.round(gap*rowFrac()));
-    const yT=Math.max(0,yB-h);
-    const W=wallsByRow[r];
-    for(let i=0;i<SLOTS_PER_ROW;i++){ const x0=W[i],x1=W[i+1]; rois.push({x:x0,y:yT,w:x1-x0,h:yB-yT,row:r,col:i}); }
-  }
-  draw(); analyzeBtn.disabled=false; setStatus('Auto aligned. Tap “Analyze”. If misaligned, use Guided.');
-});
-
-/* ===== Blue strip finders (used by Auto) ===== */
-async function detectBlueStrips(imgEl, edge, sens){
-  const W=imgEl.naturalWidth,H=imgEl.naturalHeight;
-  const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
-  g.drawImage(imgEl,0,0,W,H); const {data}=g.getImageData(0,0,W,H);
-  const x0=Math.round(W*edge), x1=Math.round(W*(1-edge));
-  const score=new Float32Array(H);
-  for(let y=0;y<H;y++){
-    let b=0,cnt=0;
-    for(let x=x0;x<=x1;x+=2){
-      const i=(y*W+x)*4, R=data[i],G=data[i+1],B=data[i+2];
-      const {h,s,v}=rgb2hsv(R,G,B);
-      if(h>190&&h<265&&s>(0.18+0.40*sens)&&v>(0.22+0.30*sens)) b++;
-      cnt++;
-    }
-    score[y]=cnt?b/cnt:0;
-  }
-  const s2=smooth(score,8), peaks=pickSpread(peaksAbove(s2,0.35),ROWS,Math.round(H/7));
-  return peaks.slice(0,ROWS).sort((a,b)=>a-b);
-}
-async function bandInterior(imgEl, yBottom, edge, sens){
-  const W=imgEl.naturalWidth,H=imgEl.naturalHeight;
-  const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
-  g.drawImage(imgEl,0,0,W,H); const {data}=g.getImageData(0,0,W,H);
-  const L=Math.round(W*edge), R=Math.round(W*(1-edge));
-  const bandH=Math.max(8,Math.round(H*0.02));
-  const y0=Math.min(H-2,yBottom+2), y1=Math.min(H-1,y0+bandH);
-  const blue=new Float32Array(W).fill(0);
-  for(let x=L;x<=R;x++){
-    let cnt=0,b=0;
-    for(let y=y0;y<=y1;y++){
-      const i=(y*W+x)*4, R0=data[i],G0=data[i+1],B0=data[i+2];
-      const {h,s,v}=rgb2hsv(R0,G0,B0);
-      if(h>190&&h<265&&s>(0.18+0.30*sens)&&v>(0.22+0.20*sens)) b++; cnt++;
-    }
-    blue[x]=cnt?b/cnt:0;
-  }
-  const sb=smooth(blue,4), thr=0.33*Math.max(...sb);
-  let bestLen=0, bxL=L, bxR=R, cur=null;
-  for(let x=L;x<=R;x++){
-    if(sb[x]>thr){ if(cur===null) cur=x; }
-    else if(cur!==null){ const len=x-1-cur; if(len>bestLen){bestLen=len; bxL=cur; bxR=x-1;} cur=null; }
-  }
-  if(cur!==null){ const len=R-cur; if(len>bestLen){bestLen=len; bxL=cur; bxR=R;} }
-  const pad=Math.round((bxR-bxL)*0.01); bxL+=pad; bxR-=pad;
-  if(bxR-bxL<60){ bxL=L; bxR=R; }
-  return {xL:bxL,xR:bxR};
-}
-
-/* ===== Occupancy ===== */
+/* ===== occupancy detection ===== */
 function cropROI(r){ const c=document.createElement('canvas'); c.width=r.w; c.height=r.h; c.getContext('2d').drawImage(current.image,r.x,r.y,r.w,r.h,0,0,r.w,r.h); return c; }
 function slotOccupied(c){
   const k=c.getContext('2d');
@@ -392,25 +288,26 @@ function slotOccupied(c){
 function draw(){
   ctx.clearRect(0,0,overlay.width,overlay.height); if(!current) return;
 
-  // thin cyan lines at row bottoms
-  if(showGuidesEl.checked && rowBottoms.length){
-    ctx.strokeStyle='rgba(50,208,255,.9)'; ctx.lineWidth=2/view.dpr;
-    for(const y of rowBottoms){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(current.W,y); ctx.stroke(); }
+  // row cyan lines
+  if(showGuidesEl.checked){
+    ctx.strokeStyle='rgba(50,208,255,.9)'; ctx.lineWidth=2/(window.devicePixelRatio||1);
+    for(const y of rowBottoms){ if(Number.isFinite(y)){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(current.W,y); ctx.stroke(); } }
   }
-  // short white markers at L/R taps
-  if(showGuidesEl.checked && rowLR.length){
-    ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=3/view.dpr;
-    for(let r=0;r<rowLR.length;r++){
-      const y=rowBottoms[r]||0, h=20/view.scale;
-      const L=rowLR[r]?.xL, R=rowLR[r]?.xR;
-      if(Number.isFinite(L)){ ctx.beginPath(); ctx.moveTo(L,y-h); ctx.lineTo(L,y+h); ctx.stroke(); }
-      if(Number.isFinite(R)){ ctx.beginPath(); ctx.moveTo(R,y-h); ctx.lineTo(R,y+h); ctx.stroke(); }
-    }
+  // L/R markers
+  if(showGuidesEl.checked){
+    ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=3/(window.devicePixelRatio||1);
+    if(Number.isFinite(Lx)){ ctx.beginPath(); ctx.moveTo(Lx,0); ctx.lineTo(Lx,Math.min(current.H,40)); ctx.stroke(); }
+    if(Number.isFinite(Rx)){ ctx.beginPath(); ctx.moveTo(Rx,0); ctx.lineTo(Rx,Math.min(current.H,40)); ctx.stroke(); }
   }
-  // 12 rectangles per row
+  // walls (short hash near top of image just for sanity)
+  if(showGuidesEl.checked && walls.length===SLOTS_PER_ROW+1){
+    ctx.strokeStyle='rgba(255,255,255,.7)'; ctx.lineWidth=2/(window.devicePixelRatio||1);
+    for(const x of walls){ ctx.beginPath(); ctx.moveTo(x,10); ctx.lineTo(x,26); ctx.stroke(); }
+  }
+  // rois
   if(rois.length===TOTAL_SLOTS){
-    ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth=2/view.dpr;
-    for(const r of rois){ ctx.strokeRect(r.x,r.y,r.w,r.h); }
+    ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth=2/(window.devicePixelRatio||1);
+    for(const r of rois) ctx.strokeRect(r.x,r.y,r.w,r.h);
   }
 }
 function paintOverlay(){
@@ -420,42 +317,23 @@ function paintOverlay(){
     const r=rois[i]; ctx.fillStyle = occMask[i] ? 'rgba(0,200,0,.35)' : 'rgba(255,0,0,.35)';
     ctx.fillRect(r.x,r.y,r.w,r.h);
   }
-  ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=1.5/view.dpr;
-  for(const r of rois){ ctx.strokeRect(r.x,r.y,r.w,r.h); }
+  ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=1.5/(window.devicePixelRatio||1);
+  for(const r of rois) ctx.strokeRect(r.x,r.y,r.w,r.h);
 }
 
-/* ===== helpers ===== */
+/* ===== utils & reset ===== */
+function resetAlignment(){ Lx=null; Rx=null; rowBottoms=new Array(ROWS).fill(null); walls=[]; rois=[]; occMask=[]; draw(); analyzeBtn.disabled=true; }
+function resetAll(){ resetAlignment(); resultsBody.innerHTML=''; }
 function rgb2hsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min; let h=0; if(d!==0){ if(max===r) h=((g-b)/d)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0)h+=360; } const s=max===0?0:d/max, v=max; return {h,s,v}; }
-function smooth(a,w){const o=new Float32Array(a.length); for(let i=0;i<a.length;i++){let s=0,c=0; for(let k=-w;k<=w;k++){const j=i+k; if(j<0||j>=a.length) continue; s+=a[j]; c++;} o[i]=s/c;} return o;}
-function peaksAbove(series, frac){ const m=Math.max(...series); const out=[]; if(!m) return out; for(let y=1;y<series.length-1;y++){ if(series[y]>=frac*m && series[y]>=series[y-1] && series[y]>=series[y+1]) out.push(y);} return out; }
-function pickSpread(peaks, need, minDist){ const out=[]; for(const p of peaks){ if(out.every(q=>Math.abs(q-p)>minDist)) out.push(p); if(out.length>=need) break; } return out.sort((a,b)=>a-b); }
 
-/* ===== mini-grid ===== */
+/* ===== mini grid ===== */
 (function initGrid(){
   for(let r=0;r<ROWS;r++){ for(let c=0;c<SLOTS_PER_ROW;c++){
     const d=document.createElement('div'); d.className='slot';
     const s=document.createElement('span'); s.textContent=`#${r*SLOTS_PER_ROW + c + 1}`;
     d.appendChild(s); boxGrid.appendChild(d);
-  }}})();
-/* ===== analyze ===== */
-analyzeBtn.addEventListener('click', ()=>{
-  if(rois.length!==TOTAL_SLOTS) return alert('Align rows first (Guided or Auto).');
-  occMask = rois.map(r => slotOccupied(cropROI(r)));
-  paintOverlay();
-  const names=namesForBox(boxSel.value||'');
-  resultsBody.innerHTML='';
-  for(let i=0;i<TOTAL_SLOTS;i++){
-    const slot=i+1, expected=names[slot]||'';
-    const status = occMask[i] ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
-    const tr=document.createElement('tr');
-    tr.className = status==='missing'?'missing':(status==='present'?'ok':'');
-    tr.innerHTML=`<td>${slot}</td><td>${expected}</td><td><span class="pill">${status}</span></td>`;
-    resultsBody.appendChild(tr);
-  }
-  // tint mini-grid
-  [...boxGrid.children].forEach((d,i)=>{ d.classList.toggle('present',!!occMask[i]); d.classList.toggle('empty',!occMask[i]); });
-  setStatus('Colorized: green=phone, red=empty.');
-});
+  }}}
+)();
 </script>
 </body>
 </html>
