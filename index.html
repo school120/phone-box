@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box – YOLO (browser) + Manual Fallback</title>
+<title>Phone Box — In-Browser Training (TF.js) + Auto/Manual Alignment</title>
 <style>
   :root{--bg:#0b1020;--card:#10183a;--mut:#9ab0e0}
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;background:var(--bg);color:#fff;font-family:system-ui,-apple-system,Inter,Roboto}
   header{padding:12px 16px;border-bottom:1px solid #ffffff22;font-weight:800}
-  main{max-width:1200px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1.2fr .8fr;gap:16px}
+  main{max-width:1200px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1.25fr .75fr;gap:16px}
   .card{background:#10183a;border:1px solid #ffffff22;border-radius:16px;padding:14px}
   label{display:block;margin:8px 0 6px;color:var(--mut);font-size:14px}
   input[type=file],select,button{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #ffffff33;background:#0f1738;color:#fff;font-size:16px}
@@ -28,11 +28,14 @@
   table{width:100%;border-collapse:collapse;margin-top:10px}
   th,td{border-bottom:1px solid #ffffff19;padding:8px 6px;text-align:left}
   tr.missing{background:#ff50501a}
+  .modes{display:flex;gap:8px;flex-wrap:wrap}
+  .modes button{flex:1}
+  .fine{font-size:12px;color:#9ab0e0}
   @media (max-width:900px){ main{grid-template-columns:1fr} }
 </style>
 </head>
 <body>
-<header>📱 Phone Box — YOLO detector (browser) + number-strip guided slotting + Manual fallback.</header>
+<header>📱 Phone Box — Train in your browser. Saves per-box model. Auto/Manual alignment. Roster support.</header>
 
 <main>
   <section class="card">
@@ -41,10 +44,12 @@
       <canvas id="overlay"></canvas>
     </div>
     <div class="toolbar">
-      <span class="pill" id="status">Load model…</span>
-      <span class="pill" id="modePill">Mode: Auto</span>
+      <span class="pill" id="status">Upload a photo.</span>
+      <span class="pill" id="modePill">Mode: View</span>
     </div>
+
     <div class="grid" id="miniGrid"></div>
+
     <table>
       <thead><tr><th>Slot</th><th>Expected</th><th>Status</th></tr></thead>
       <tbody id="results"></tbody>
@@ -64,48 +69,126 @@
     <label>Upload photo</label>
     <input id="photo" type="file" accept="image/*" capture="environment">
 
+    <div class="modes" style="margin-top:8px">
+      <button id="btnAuto" class="primary">Auto align</button>
+      <button id="btnManual">Manual align</button>
+      <button id="btnTrain">Train</button>
+      <button id="btnPredict">Predict</button>
+    </div>
+
     <div class="toolbar">
-      <button id="run" class="primary" disabled>Run YOLO (Auto)</button>
-      <button id="manual">Manual fallback</button>
-      <button id="analyze">Analyze</button>
-      <button id="reset">Reset</button>
+      <button id="btnAnalyze">Analyze</button>
+      <button id="btnReset">Reset</button>
       <label><input id="showGuides" type="checkbox" checked> Show guides</label>
     </div>
+
+    <details>
+      <summary>Training panel</summary>
+      <div class="fine">Select slot(s) below, then click “Add Present” or “Add Empty”, repeat a few times, then “Train model”.</div>
+      <div class="toolbar">
+        <button id="addPresent">➕ Add Present</button>
+        <button id="addEmpty">➕ Add Empty</button>
+      </div>
+      <div class="toolbar">
+        <label>Epochs <input id="epochs" type="number" value="12" min="1" max="50" style="width:110px"></label>
+        <button id="trainModel" class="primary">Train model</button>
+      </div>
+      <div class="toolbar">
+        <button id="saveModel">💾 Save model</button>
+        <button id="loadModel">📥 Load model</button>
+        <button id="clearModel">🧹 Clear model</button>
+      </div>
+      <div class="toolbar">
+        <button id="exportDS">⬇️ Export dataset</button>
+        <input id="importDS" type="file" accept=".json" style="width:auto">
+      </div>
+      <div class="fine" id="trainStatus">Samples: 0 present / 0 empty</div>
+    </details>
+
+    <details>
+      <summary>Auto align options</summary>
+      <label>Blue sensitivity (HSV Δ)</label>
+      <input type="range" id="blueDelta" min="0" max="40" value="18">
+      <small class="fine">Raise if it can’t find all 5 blue strips.</small>
+    </details>
   </section>
 </main>
 
-<!-- onnxruntime-web (WebGL/WebGPU) -->
-<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
-<!-- OpenCV.js for ticks projection -->
+<!-- TF.js + MobileNet for transfer learning -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0"></script>
+<!-- OpenCV.js for tick-mark detection -->
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+
 <script>
-/* ======= UI refs/state ======= */
+/* ====== constants / state ====== */
 const ROWS=5, COLS=12, TOTAL=ROWS*COLS;
 const SLOT_H_FRAC=0.42, SLOT_TOP_PAD=0.04;
+const FEAT_SIZE=1024;          // MobileNet v2 embeddings (conv_preds)
+const PATCH=160;               // crop size for classifier
 
 const stage=document.getElementById('stage');
 const overlay=document.getElementById('overlay'); const ctx=overlay.getContext('2d');
 const preview=document.getElementById('preview');
+
 const statusEl=document.getElementById('status');
 const modePill=document.getElementById('modePill');
-const runBtn=document.getElementById('run');
-const manualBtn=document.getElementById('manual');
-const analyzeBtn=document.getElementById('analyze');
-const resetBtn=document.getElementById('reset');
-const photo=document.getElementById('photo');
-const showGuides=document.getElementById('showGuides');
-const miniGrid=document.getElementById('miniGrid');
 const resultsBody=document.getElementById('results');
-const rosterFile=document.getElementById('rosterFile');
-const rosterStatus=document.getElementById('rosterStatus');
+const miniGrid=document.getElementById('miniGrid');
+
+const btnAuto=document.getElementById('btnAuto');
+const btnManual=document.getElementById('btnManual');
+const btnTrain=document.getElementById('btnTrain');
+const btnPredict=document.getElementById('btnPredict');
+
+const btnAnalyze=document.getElementById('btnAnalyze');
+const btnReset=document.getElementById('btnReset');
+
+const addPresent=document.getElementById('addPresent');
+const addEmpty=document.getElementById('addEmpty');
+const trainModelBtn=document.getElementById('trainModel');
+const saveModelBtn=document.getElementById('saveModel');
+const loadModelBtn=document.getElementById('loadModel');
+const clearModelBtn=document.getElementById('clearModel');
+const exportDSBtn=document.getElementById('exportDS');
+const importDSInp=document.getElementById('importDS');
+
+const trainStatus=document.getElementById('trainStatus');
+
+const photo=document.getElementById('photo'); const blueDelta=document.getElementById('blueDelta');
+const showGuides=document.getElementById('showGuides');
+
+const rosterFile=document.getElementById('rosterFile'); const rosterStatus=document.getElementById('rosterStatus');
 const boxSel=document.getElementById('box');
 
-let session=null, current=null;
-let rois=[], rowY=[], wallsPerRow=[], occ=[];
-let manual=false, cvReady=false, roster=[];
+let cvReady=false, mode='view';
+let current=null;           // image loaded flag
+let rowY=[], wallsPerRow=[], rois=[], picked=new Set(), occ=[];
+let roster=[];
+let mobileNet=null, headModel=null;  // tfjs models
+let dataset={present:[], empty:[]};  // data URLs of slot crops
+let usingTrained=false;
 
-window.Module = { onRuntimeInitialized(){ cvReady=true; } };
+/* ====== init ====== */
+window.Module={onRuntimeInitialized(){ cvReady=true; }};
+(function fillBoxes(){
+  const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
+  grades.forEach(g=>letters.forEach(l=>ids.push(g+l))); ids.push('SM1','SM2');
+  boxSel.innerHTML=ids.map(x=>`<option>${x}</option>`).join('');
+})();
+(function initGrid(){
+  for(let i=0;i<TOTAL;i++){
+    const d=document.createElement('div'); d.className='slot'; d.dataset.idx=i; d.innerHTML=`<span>#${i+1}</span>`;
+    d.addEventListener('click',()=>{
+      if(mode!=='train') return;
+      if(picked.has(i)) picked.delete(i); else picked.add(i);
+      d.style.outline = picked.has(i)?'3px solid #ffd54a':'';
+    });
+    miniGrid.appendChild(d);
+  }
+})();
 
+/* ====== helpers ====== */
 function setStatus(t){ statusEl.textContent=t; }
 function sizeOverlayToImage(w,h){
   const sw=stage.clientWidth, sh=Math.max(260, Math.round(sw*(h/w)));
@@ -118,16 +201,9 @@ function sizeOverlayToImage(w,h){
 function clearOverlay(){ ctx.clearRect(0,0,overlay.width,overlay.height); }
 function line(x1,y1,x2,y2,style='#32d0ff',lw=2){ ctx.strokeStyle=style; ctx.lineWidth=lw/(window.devicePixelRatio||1); ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
 function rect(r,style='#fff',lw=1.6){ ctx.strokeStyle=style; ctx.lineWidth=lw/(window.devicePixelRatio||1); ctx.strokeRect(r.x,r.y,r.w,r.h); }
-function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
 
-/* ======= box options ======= */
-(function boxes(){
-  const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
-  grades.forEach(g=>letters.forEach(l=>ids.push(g+l))); ids.push('SM1','SM2');
-  boxSel.innerHTML=ids.map(x=>`<option>${x}</option>`).join('');
-})();
-
-/* ======= CSV parser & roster ======= */
+/* ====== roster load (project-page safe) ====== */
 function parseCSV(text){
   const rows=[]; let row=[],cur='',q=false; const push=()=>{row.push(cur);cur='';};
   for(let i=0;i<text.length;i++){
@@ -141,37 +217,20 @@ function parseCSV(text){
   return rows.filter(r=>r.some(x=>x&&x.trim()!=='')).map(r=>{const o={}; header.forEach((h,i)=>o[h]=r[i]||''); return o;});
 }
 async function loadRoster(){
-  const status = (t)=> rosterStatus.textContent=t;
-  // Project-page safe relative path candidates
-  const base = (()=>{
-    const p = window.location.pathname;
-    return p.endsWith('/')? p : p.replace(/[^/]+$/,'');
-  })();
-  const candidates = [
-    'data/roster.csv',
-    './data/roster.csv',
-    base + 'data/roster.csv',
-    '/data/roster.csv'
-  ];
+  const status=(t)=> rosterStatus.textContent=t;
+  const base=(()=>{const p=location.pathname; return p.endsWith('/')?p:p.replace(/[^/]+$/,'');})();
+  const candidates=['data/roster.csv','./data/roster.csv',base+'data/roster.csv','/data/roster.csv'];
   status('Loading roster…');
   for(const url of candidates){
-    try{
-      const res = await fetch(url, {cache:'no-store'});
-      if(res.ok){
-        roster = parseCSV(await res.text());
-        status(`Loaded ✓ (${url})`);
-        return;
-      }
-    }catch(e){ console.warn('Roster fetch failed:', url, e); }
+    try{ const res=await fetch(url,{cache:'no-store'}); if(res.ok){ roster=parseCSV(await res.text()); status(`Loaded ✓ (${url})`); return; } }
+    catch(e){ console.warn('Roster fetch failed',url,e); }
   }
   status('Could not load roster (upload below).');
 }
 loadRoster();
 rosterFile.addEventListener('change',()=>{
   const f=rosterFile.files[0]; if(!f) return;
-  const r=new FileReader();
-  r.onload=()=>{ roster=parseCSV(r.result||''); rosterStatus.textContent='Loaded from file ✓'; };
-  r.readAsText(f);
+  const r=new FileReader(); r.onload=()=>{ roster=parseCSV(r.result||''); rosterStatus.textContent='Loaded from file ✓'; }; r.readAsText(f);
 });
 function namesForBox(id){
   const out={};
@@ -184,172 +243,80 @@ function namesForBox(id){
   return out;
 }
 
-/* ======= load ONNX model (project-page safe) ======= */
-(async function initModel(){
-  setStatus('Loading model…');
-  const base = (()=>{
-    const p = window.location.pathname;
-    return p.endsWith('/')? p : p.replace(/[^/]+$/,'');
-  })();
-  const candidates = [
-    'model/box_yolo.onnx',
-    './model/box_yolo.onnx',
-    base + 'model/box_yolo.onnx'
-  ];
-  for(const url of candidates){
-    try{
-      session = await ort.InferenceSession.create(url, {
-        executionProviders: ['webgpu','wasm','webgl'],
-        graphOptimizationLevel: 'all'
-      });
-      setStatus(`Model ready ✓ (${url}). Upload a photo.`);
-      runBtn.disabled=false;
-      return;
-    }catch(e){ console.warn('Model load failed:', url, e); }
-  }
-  setStatus('Could not load model (place it at model/box_yolo.onnx).');
-})();
-
-/* ======= image load ======= */
-photo.addEventListener('change', async (e)=>{
+/* ====== image load ====== */
+photo.addEventListener('change', e=>{
   const f=e.target.files[0]; if(!f) return;
   const url=URL.createObjectURL(f);
-  const im = new Image(); im.onload=async ()=>{
+  const im=new Image(); im.onload=()=>{
     preview.src=url; preview.style.display='block';
     sizeOverlayToImage(im.naturalWidth, im.naturalHeight);
-    clearOverlay(); rois=[]; rowY=[]; wallsPerRow=[]; occ=[];
-    setStatus('Photo loaded. Tap “Run YOLO (Auto)”.');
+    clearOverlay(); rowY=[]; wallsPerRow=[]; rois=[]; picked.clear(); occ=[]; usingTrained=false;
+    setStatus('Photo loaded. Use Auto align or Manual.');
   }; im.src=url;
 });
+window.addEventListener('resize',()=>{ if(preview.src) sizeOverlayToImage(preview.naturalWidth, preview.naturalHeight); });
 
-/* ======= YOLO helpers ======= */
-function letterbox(img, newShape=[640,640]){
-  const [w,h]=[img.naturalWidth||img.width, img.naturalHeight||img.height];
-  const [nw,nh]=newShape;
-  const r = Math.min(nw/w, nh/h);
-  const newUnpad=[Math.round(w*r), Math.round(h*r)];
-  const dw = (nw - newUnpad[0]) / 2;
-  const dh = (nh - newUnpad[1]) / 2;
-  const c=document.createElement('canvas'); c.width=nw; c.height=nh;
-  const cx=c.getContext('2d'); cx.fillStyle='rgb(114,114,114)'; cx.fillRect(0,0,nw,nh);
-  cx.drawImage(img, 0,0,w,h, Math.round(dw), Math.round(dh), newUnpad[0], newUnpad[1]);
-  const data = cx.getImageData(0,0,nw,nh).data;
-  const out = new Float32Array(1*3*nw*nh); let o=0;
-  for(let y=0;y<nh;y++){
-    for(let x=0;x<nw;x++){
-      const i=(y*nw+x)*4;
-      out[o + (0*nh + y)*nw + x] = data[i]/255;
-      out[o + (1*nh + y)*nw + x] = data[i+1]/255;
-      out[o + (2*nh + y)*nw + x] = data[i+2]/255;
-    }
+/* ====== modes ====== */
+function setMode(m){ mode=m; modePill.textContent='Mode: '+m[0].toUpperCase()+m.slice(1); }
+btnAuto.onclick=()=>{ setMode('auto'); autoAlign(); };
+btnManual.onclick=()=>{ setMode('manual'); manualInit(); };
+btnTrain.onclick=()=>{ setMode('train'); setStatus('Train: click slot(s), then Add Present/Empty; repeat; then Train model.'); };
+btnPredict.onclick=()=>{ setMode('predict'); setStatus('Predict: click Analyze to run trained model.'); };
+
+/* ====== Auto align (find blue strips + tick walls) ====== */
+function autoAlign(){
+  if(!cvReady||!preview.src) return alert('Need image + OpenCV.');
+  const W=preview.naturalWidth, H=preview.naturalHeight;
+
+  // 1) downscale for speed
+  const scale=1600/Math.max(W,H);
+  const c=document.createElement('canvas'); const cw=Math.round(W*Math.min(1,scale)), ch=Math.round(H*Math.min(1,scale));
+  c.width=cw; c.height=ch; c.getContext('2d').drawImage(preview,0,0,W,H,0,0,cw,ch);
+  const imgData=c.getContext('2d').getImageData(0,0,cw,ch);
+  const src=cv.matFromImageData(imgData);
+  const hsv=new cv.Mat(); cv.cvtColor(src,hsv,cv.COLOR_RGBA2RGB); cv.cvtColor(hsv,hsv,cv.COLOR_RGB2HSV);
+
+  // 2) blue mask
+  const delta=+blueDelta.value;
+  const lower=new cv.Mat(hsv.rows,hsv.cols,hsv.type(),[100-delta,60,40,0]);
+  const upper=new cv.Mat(hsv.rows,hsv.cols,hsv.type(),[130+delta,255,255,255]);
+  const mask=new cv.Mat(); cv.inRange(hsv,lower,upper,mask);
+  const k=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(21,5));
+  cv.morphologyEx(mask,mask,cv.MORPH_CLOSE,k); cv.morphologyEx(mask,mask,cv.MORPH_OPEN,k);
+  const contours=new cv.MatVector(), hier=new cv.Mat(); cv.findContours(mask,contours,hier,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
+
+  // 3) pick 5 bars
+  const bars=[];
+  for(let i=0;i<contours.size();i++){
+    const r=cv.boundingRect(contours.get(i)); const ar=r.width/r.height;
+    if(r.width>cw*0.35 && r.height>6 && ar>8) bars.push(r);
   }
-  return {tensor:out, shape:[1,3,nh,nw], r, dw, dh, nw, nh, w0:w, h0:h};
-}
-function nms(boxes, scores, iouThresh=0.45, scoreThresh=0.25){
-  const idx = scores.map((s,i)=>[s,i]).filter(v=>v[0]>=scoreThresh).sort((a,b)=>b[0]-a[0]).map(v=>v[1]);
-  const picked=[];
-  while(idx.length){
-    const i = idx.shift(); picked.push(i);
-    const a=boxes[i];
-    const rest=[];
-    for(const j of idx){
-      const b=boxes[j];
-      const xx1=Math.max(a[0],b[0]), yy1=Math.max(a[1],b[1]);
-      const xx2=Math.min(a[2],b[2]), yy2=Math.min(a[3],b[3]);
-      const w=Math.max(0,xx2-xx1), h=Math.max(0,yy2-yy1);
-      const inter=w*h, iou=inter/(((a[2]-a[0])*(a[3]-a[1]))+((b[2]-b[0])*(b[3]-b[1]))-inter);
-      if(iou<=iouThresh) rest.push(j);
-    }
-    idx.splice(0, idx.length, ...rest);
-  }
-  return picked;
-}
+  bars.sort((a,b)=>a.y-b.y); if(bars.length>5) bars.splice(5);
+  if(bars.length<5){ setStatus('Could not find 5 number strips. Raise Blue sensitivity or use Manual.'); [src,hsv,lower,upper,mask,contours,hier].forEach(m=>m.delete()); return; }
 
-/* ======= run YOLO (phones + number_strips) ======= */
-runBtn.addEventListener('click', async ()=>{
-  if(!session || !preview.src){ alert('Model and photo required.'); return; }
-  manual=false; modePill.textContent='Mode: Auto';
-  setStatus('Running YOLO…');
+  // 4) map bar centers to full-res Y
+  rowY = bars.map(b => (b.y + b.height/2) / Math.min(1,scale));
 
-  const lb = letterbox(preview, [640,640]);
-  const feeds={ 'images': new ort.Tensor('float32', lb.tensor, lb.shape) };
-  const out = await session.run(feeds);
-  const det = out[Object.keys(out)[0]].data; // Float32Array [1,N,85]
-  const N = det.length / 85;
-  const boxes=[], scores=[], classes=[];
-  for(let i=0;i<N;i++){
-    const base=i*85;
-    const bx=det[base+0], by=det[base+1], bw=det[base+2], bh=det[base+3];
-    const x1=(bx-bw/2 - lb.dw)/lb.r, y1=(by-bh/2 - lb.dh)/lb.r;
-    const x2=(bx+bw/2 - lb.dw)/lb.r, y2=(by+bh/2 - lb.dh)/lb.r;
-    const clsScores = det.slice(base+5, base+7); // 2 classes: phone(0), number_strip(1)
-    let bestC=0, bestS=clsScores[0];
-    if(clsScores[1]>bestS){ bestC=1; bestS=clsScores[1]; }
-    boxes.push([clamp(x1,0,lb.w0), clamp(y1,0,lb.h0), clamp(x2,0,lb.w0), clamp(y2,0,lb.h0)]);
-    scores.push(bestS); classes.push(bestC);
-  }
-  const keep = nms(boxes, scores, 0.45, 0.25);
-  const phones=[]; const strips=[];
-  for(const i of keep){
-    const b=boxes[i], conf=scores[i], cls=classes[i];
-    (cls===1 ? strips : phones).push({b,conf});
-  }
-  if(strips.length<3){ setStatus('Not enough number_strip detections. Use Manual fallback.'); return; }
-
-  // Cluster strips into 5 rows
-  strips.sort((a,b)=>((a.b[1]+a.b[3])/2)-((b.b[1]+b.b[3])/2));
-  const centers=strips.map(s=>(s.b[1]+s.b[3])/2);
-  const rows = kmeans1D(centers, ROWS).centers.sort((a,b)=>a-b);
-  rowY = rows;
-
-  // For each row, merge x-span of nearby strips; then get 13 tick walls
+  // 5) for each bar, get 13 vertical walls by tick projection in full-res
   wallsPerRow=[];
-  for(const y of rowY){
-    const near = strips.filter(s=>Math.abs(((s.b[1]+s.b[3])/2)-y) < 40);
-    const span = near.length ? [
-      Math.min(...near.map(s=>s.b[0])),
-      Math.max(...near.map(s=>s.b[2])),
-      Math.min(...near.map(s=>s.b[1])),
-      Math.max(...near.map(s=>s.b[3]))
-    ] : [10, lb.w0-10, y-10, y+10];
-
-    const walls = getWallsFromStripRegion(span);
-    wallsPerRow.push(walls);
+  for(const b of bars){
+    const x1=(b.x-10)/Math.min(1,scale), x2=(b.x+b.width+10)/Math.min(1,scale);
+    const y1=(b.y-8)/Math.min(1,scale),  y2=(b.y+b.height+8)/Math.min(1,scale);
+    wallsPerRow.push( getWallsFromStripRegion([x1,x2,y1,y2]) );
   }
 
-  // Build ROIs & draw
-  buildROIsFromRowsAndWalls(rowY, wallsPerRow, preview.naturalWidth, preview.naturalHeight);
-  drawGuides(rowY, wallsPerRow, preview.naturalWidth, preview.naturalHeight);
-
-  // store phones for analyze
-  window.__phones = phones.map(p=>({x1:p.b[0],y1:p.b[1],x2:p.b[2],y2:p.b[3]}));
-  setStatus('YOLO done. Click Analyze.');
-});
-
-function kmeans1D(values, k){
-  values=[...values].sort((a,b)=>a-b);
-  const centers=[]; for(let i=0;i<k;i++) centers.push(values[Math.floor(i*(values.length-1)/(k-1))]);
-  for(let it=0;it<15;it++){
-    const groups=Array.from({length:k},()=>[]);
-    for(const v of values){ let bi=0,bd=Infinity; for(let i=0;i<k;i++){const d=Math.abs(v-centers[i]); if(d<bd){bd=d;bi=i}} groups[bi].push(v); }
-    for(let i=0;i<k;i++){ if(groups[i].length) centers[i]=groups[i].reduce((a,b)=>a+b,0)/groups[i].length; }
-  }
-  return {centers};
+  buildROIsFromRowsAndWalls(rowY, wallsPerRow, W, H);
+  drawGuides(rowY, wallsPerRow, W, H);
+  setStatus('Auto aligned. If slightly off, switch to Manual and drag.');
+  [src,hsv,lower,upper,mask,contours,hier].forEach(m=>m.delete());
 }
-
-// Use OpenCV on the original image inside the strip span to get 13 vertical walls (tick marks)
 function getWallsFromStripRegion([x1,x2,y1,y2]){
-  if(!cvReady){
-    const walls=[]; for(let i=0;i<13;i++) walls.push(x1 + i*(x2-x1)/12); return walls;
-  }
   const W=preview.naturalWidth, H=preview.naturalHeight;
   const sx=Math.max(0,Math.floor(x1)), ex=Math.min(W,Math.ceil(x2));
-  const sy=Math.max(0,Math.floor(y1-8)), ey=Math.min(H,Math.ceil(y2+8));
-  const w=ex-sx, h=ey-sy; if(w<20||h<6){const walls=[];for(let i=0;i<13;i++) walls.push(x1+i*(x2-x1)/12);return walls;}
-  const c=document.createElement('canvas'); c.width=w; c.height=h; const cx=c.getContext('2d');
-  cx.drawImage(preview, sx,sy,w,h, 0,0,w,h);
-  const imgData=cx.getImageData(0,0,w,h);
-  const mat=cv.matFromImageData(imgData);
+  const sy=Math.max(0,Math.floor(y1)), ey=Math.min(H,Math.ceil(y2));
+  const w=ex-sx, h=ey-sy; if(w<20||h<6){const walls=[]; for(let i=0;i<13;i++) walls.push(x1+i*(x2-x1)/12); return walls;}
+  const c=document.createElement('canvas'); c.width=w; c.height=h; const cx=c.getContext('2d'); cx.drawImage(preview,sx,sy,w,h,0,0,w,h);
+  const mat=cv.matFromImageData(cx.getImageData(0,0,w,h));
   const gray=new cv.Mat(); cv.cvtColor(mat,gray,cv.COLOR_RGBA2GRAY);
   const norm=new cv.Mat(); cv.normalize(gray,norm,0,255,cv.NORM_MINMAX);
   const th=new cv.Mat(); cv.threshold(norm,th,0,255,cv.THRESH_BINARY|cv.THRESH_OTSU);
@@ -357,102 +324,35 @@ function getWallsFromStripRegion([x1,x2,y1,y2]){
   const k2=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(1,7));
   const m1=new cv.Mat(); cv.morphologyEx(th,m1,cv.MORPH_OPEN,k);
   const m2=new cv.Mat(); cv.morphologyEx(m1,m2,cv.MORPH_CLOSE,k2);
-  const proj=new Float32Array(w);
-  for(let x=0;x<w;x++){ let s=0; for(let y=0;y<h;y++) if(m2.ucharPtr(y,x)[0]>0) s++; proj[x]=s; }
-  const sm=new Float32Array(w);
-  for(let x=0;x<w;x++){ let s=0,cnt=0; for(let d=-4;d<=4;d++){const xx=x+d; if(xx>=0&&xx<w){s+=proj[xx];cnt++;}} sm[x]=s/cnt;}
+  const proj=new Float32Array(w); for(let x=0;x<w;x++){ let s=0; for(let y=0;y<h;y++) if(m2.ucharPtr(y,x)[0]>0) s++; proj[x]=s; }
+  const sm=new Float32Array(w); for(let x=0;x<w;x++){ let s=0,cnt=0; for(let d=-4;d<=4;d++){const xx=x+d; if(xx>=0&&xx<w){s+=proj[xx];cnt++;}} sm[x]=s/cnt; }
   const walls=[]; for(let i=0;i<13;i++){ const guess=Math.round(i*(w-1)/12); let best=guess,bv=-1; for(let d=-8;d<=8;d++){const x=Math.max(0,Math.min(w-1,guess+d)); if(sm[x]>bv){bv=sm[x];best=x;}} walls.push(sx+best); }
   [mat,gray,norm,th,k,k2,m1,m2].forEach(m=>m.delete());
   return walls.sort((a,b)=>a-b);
 }
 
-/* ======= build ROIs / draw ======= */
-function buildROIsFromRowsAndWalls(rowsY, perRowWalls, W, H){
-  rois=[];
-  const gaps=[]; for(let i=1;i<rowsY.length;i++) gaps.push(rowsY[i]-rowsY[i-1]);
-  const avgGap=gaps.length?gaps.reduce((a,b)=>a+b,0)/gaps.length:H/6;
-  for(let r=0;r<ROWS;r++){
-    const yB=rowsY[r];
-    const gap=(r<ROWS-1?rowsY[r+1]-rowsY[r]:avgGap);
-    const h=Math.max(10,Math.round(gap*SLOT_H_FRAC));
-    const yT=Math.max(0,Math.round(yB - h - gap*SLOT_TOP_PAD));
-    const yBot=Math.max(yT+8, Math.round(yB - gap*SLOT_TOP_PAD));
-    const walls=perRowWalls[r]||Array.from({length:13},(_,i)=> i*(W-1)/12 );
-    for(let c=0;c<COLS;c++){
-      const x0=Math.round(walls[c]), x1=Math.round(walls[c+1]);
-      rois.push({x:x0,y:yT,w:Math.max(1,x1-x0),h:yBot-yT,row:r,col:c});
-    }
-  }
-}
-function drawGuides(rowsY, perRowWalls, W, H){
-  sizeOverlayToImage(W,H);
-  clearOverlay();
-  if(showGuides.checked){
-    rowsY.forEach(y=> line(0,y,W,y,'#32d0ff',2));
-    perRowWalls.forEach(w=>w.forEach(x=> line(x,10,x,28,'#fff',2)));
-  }
-  rois.forEach(r=>rect(r,'#fff',1.6));
-}
-
-/* ======= Analyze (map phones → slots + roster) ======= */
-analyzeBtn.addEventListener('click', ()=>{
-  if(!rois.length){ alert('Run YOLO or use Manual to place lines.'); return; }
-  const phones = window.__phones || [];
-  occ = rois.map(r=>{
-    return phones.some(p=>{
-      const ix1=Math.max(r.x,p.x1), iy1=Math.max(r.y,p.y1);
-      const ix2=Math.min(r.x+r.w,p.x2), iy2=Math.min(r.y+r.h,p.y2);
-      const inter=Math.max(0,ix2-ix1)*Math.max(0,iy2-iy1);
-      const slotA=r.w*r.h;
-      return inter/slotA>=0.15; // overlap threshold
-    });
-  });
-
-  clearOverlay();
-  for(let i=0;i<rois.length;i++){
-    const r=rois[i]; ctx.fillStyle = occ[i] ? 'rgba(0,200,0,.35)' : 'rgba(255,0,0,.35)';
-    ctx.fillRect(r.x,r.y,r.w,r.h); rect(r,'#fff',1.4);
-  }
-
-  const names=namesForBox(boxSel.value||'');
-  resultsBody.innerHTML='';
-  for(let i=0;i<TOTAL;i++){
-    const slot=i+1, expected=names[slot]||'';
-    const status = occ[i] ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
-    const tr=document.createElement('tr');
-    tr.className = status==='missing'?'missing':(status==='present'?'ok':'');
-    tr.innerHTML=`<td>${slot}</td><td>${expected}</td><td><span class="pill">${status}</span></td>`;
-    resultsBody.appendChild(tr);
-  }
-  [...miniGrid.children].forEach((d,i)=>{ d.classList.toggle('present',!!occ[i]); d.classList.toggle('empty',!!occ[i]===false); d.classList.toggle('empty',!occ[i]); });
-  setStatus('Done. Green = phone, Red = empty.');
-});
-
-/* ======= Manual fallback (drag) ======= */
-manualBtn.addEventListener('click', ()=>{
-  if(!preview.src){ alert('Upload a photo first.'); return; }
-  manual=true; modePill.textContent='Mode: Manual';
+/* ====== Manual align (drag) ====== */
+function manualInit(){
+  if(!preview.src) return alert('Upload a photo first.');
   const W=preview.naturalWidth, H=preview.naturalHeight;
   if(!rowY.length){ for(let i=0;i<ROWS;i++) rowY[i]=Math.round((i+1)*(H/(ROWS+1))); }
   const walls = Array.from({length:13},(_,i)=> Math.round(i*(W-1)/12));
   wallsPerRow = Array.from({length:ROWS},()=>walls);
   buildROIsFromRowsAndWalls(rowY, wallsPerRow, W, H);
   drawGuides(rowY, wallsPerRow, W, H);
-  setStatus('Drag near a cyan line to move a row; near a white line to move a wall, then Analyze.');
-});
+  setStatus('Drag near cyan line (row) or white line (wall). Then Train/Predict/Analyze.');
+}
 let drag=null;
 overlay.addEventListener('pointerdown', e=>{
-  if(!manual) return;
+  if(mode!=='manual') return;
   const pt=toImg(e);
-  let bestD=1e9, bi=-1;
-  for(let i=0;i<rowY.length;i++){ const d=Math.abs(pt.y-rowY[i]); if(d<bestD){bestD=d; bi=i;} }
+  let bestD=1e9, bi=-1; for(let i=0;i<rowY.length;i++){ const d=Math.abs(pt.y-rowY[i]); if(d<bestD){bestD=d; bi=i;} }
   if(bestD<22){ drag={type:'row', idx:bi}; return; }
-  let bestW=1e9, wi=-1; const w=wallsPerRow[0]||[];
-  for(let i=0;i<w.length;i++){ const d=Math.abs(pt.x-w[i]); if(d<bestW){bestW=d; wi=i;} }
+  let bestW=1e9, wi=-1; const w=wallsPerRow[0]||[]; for(let i=0;i<w.length;i++){ const d=Math.abs(pt.x-w[i]); if(d<bestW){bestW=d; wi=i;} }
   if(bestW<22){ drag={type:'wall', idx:wi}; }
 });
 overlay.addEventListener('pointermove', e=>{
-  if(!drag||!manual) return;
+  if(!drag || mode!=='manual') return;
   const pt=toImg(e), W=preview.naturalWidth, H=preview.naturalHeight;
   if(drag.type==='row'){ rowY[drag.idx]=clamp(Math.round(pt.y),0,H-1); }
   else{ const x=clamp(Math.round(pt.x),0,W-1); for(let r=0;r<ROWS;r++) wallsPerRow[r][drag.idx]=x; }
@@ -469,14 +369,229 @@ function toImg(ev){
   return {x,y};
 }
 
-/* ======= reset & grid ======= */
-resetBtn.addEventListener('click', ()=>{
-  rois=[]; rowY=[]; wallsPerRow=[]; occ=[]; manual=false; window.__phones=[];
+/* ====== Build ROIs + Draw ====== */
+function buildROIsFromRowsAndWalls(rowsY, perRowWalls, W, H){
+  rois=[];
+  const gaps=[]; for(let i=1;i<rowsY.length;i++) gaps.push(rowsY[i]-rowsY[i-1]);
+  const avgGap=gaps.length?gaps.reduce((a,b)=>a+b,0)/gaps.length:H/6;
+  for(let r=0;r<ROWS;r++){
+    const yB=rowsY[r]; const gap=(r<ROWS-1?rowsY[r+1]-rowsY[r]:avgGap);
+    const h=Math.max(10,Math.round(gap*SLOT_H_FRAC));
+    const yT=Math.max(0,Math.round(yB - h - gap*SLOT_TOP_PAD));
+    const yBot=Math.max(yT+8, Math.round(yB - gap*SLOT_TOP_PAD));
+    const walls=perRowWalls[r];
+    for(let c=0;c<COLS;c++){
+      const x0=Math.round(walls[c]), x1=Math.round(walls[c+1]);
+      rois.push({x:x0,y:yT,w:Math.max(1,x1-x0),h:yBot-yT,row:r,col:c});
+    }
+  }
+}
+function drawGuides(rowsY, perRowWalls, W, H){
+  sizeOverlayToImage(W,H);
+  clearOverlay();
+  if(showGuides.checked){
+    rowsY.forEach(y=> line(0,y,W,y,'#32d0ff',2));
+    perRowWalls.forEach(w=> w.forEach(x=> line(x,10,x,28,'#fff',2)));
+  }
+  rois.forEach(r=>rect(r,'#fff',1.6));
+}
+
+/* ====== TRAINING (TF.js transfer learning) ====== */
+async function ensureBackbone(){
+  if(mobileNet) return;
+  setStatus('Loading MobileNet backbone…');
+  // MobileNet v2 — we’ll use embeddings from the head layer
+  mobileNet = await mobilenet.load({version:2, alpha:1.0});
+  setStatus('Backbone ready.');
+}
+function cropSlotToDataURL(r, size=PATCH){
+  const c=document.createElement('canvas'); c.width=size; c.height=size; const cx=c.getContext('2d');
+  cx.imageSmoothingQuality='high';
+  cx.drawImage(preview, r.x, r.y, r.w, r.h, 0,0,size,size);
+  return c.toDataURL('image/jpeg', 0.8);
+}
+function updateTrainStatus(){
+  trainStatus.textContent=`Samples: ${dataset.present.length} present / ${dataset.empty.length} empty`;
+}
+addPresent.onclick=()=>addSamples('present');
+addEmpty.onclick =()=>addSamples('empty');
+function addSamples(label){
+  if(rois.length!==TOTAL){ alert('Align rows & slots first (Auto or Manual).'); return; }
+  if(picked.size===0){ alert('In Train mode, click one or more slots in the mini grid.'); return; }
+  for(const i of picked){
+    const r=rois[i];
+    const dataURL=cropSlotToDataURL(r);
+    dataset[label].push({box:boxSel.value||'', idx:i, dataURL});
+  }
+  picked.clear(); [...miniGrid.children].forEach(d=>d.style.outline='');
+  updateTrainStatus();
+  setStatus(`Added ${label} samples.`);
+}
+function dataURLToTensor(dataURL){
+  return new Promise(res=>{
+    const im=new Image(); im.onload=()=>{
+      const c=document.createElement('canvas'); c.width=PATCH; c.height=PATCH; const cx=c.getContext('2d');
+      cx.drawImage(im,0,0, PATCH, PATCH);
+      const imgData=cx.getImageData(0,0,PATCH,PATCH);
+      const t=tf.browser.fromPixels(imgData).toFloat().div(255).expandDims(); // [1, H, W, 3]
+      res(t);
+    }; im.src=dataURL;
+  });
+}
+async function buildDatasetTensors(){
+  const xs=[], ys=[];
+  for(const s of dataset.present){ const t=await dataURLToTensor(s.dataURL); const emb=mobileNet.infer(t,'conv_preds'); xs.push(emb); ys.push(1); t.dispose(); }
+  for(const s of dataset.empty){ const t=await dataURLToTensor(s.dataURL); const emb=mobileNet.infer(t,'conv_preds'); xs.push(emb); ys.push(0); t.dispose(); }
+  if(xs.length===0) return null;
+  const X=tf.concat(xs,0); xs.forEach(t=>t.dispose());
+  const Y=tf.tensor(ys).expandDims(1);
+  return {X,Y};
+}
+function buildHead(){
+  // simple dense head on top of embeddings
+  const m=tf.sequential();
+  m.add(tf.layers.flatten({inputShape:[1,1,FEAT_SIZE]}));
+  m.add(tf.layers.dense({units:128, activation:'relu'}));
+  m.add(tf.layers.dropout({rate:0.3}));
+  m.add(tf.layers.dense({units:1, activation:'sigmoid'}));
+  m.compile({optimizer: tf.train.adam(1e-3), loss:'binaryCrossentropy', metrics:['accuracy']});
+  return m;
+}
+trainModelBtn.onclick=async()=>{
+  if(!preview.src) return alert('Load a photo & align slots first.');
+  if(dataset.present.length<3 || dataset.empty.length<3) return alert('Add at least 3 present and 3 empty samples.');
+  await ensureBackbone();
+  const data=await buildDatasetTensors(); if(!data){ alert('No data.'); return; }
+  headModel = buildHead();
+  const ep = clamp(parseInt(document.getElementById('epochs').value||'12',10),1,50);
+  setStatus('Training in browser…');
+  await headModel.fit(data.X, data.Y, {
+    epochs: ep, batchSize: 16, shuffle: true,
+    callbacks: { onEpochEnd:(e,logs)=> setStatus(`Training… epoch ${e+1}/${ep} — acc ${logs.acc?.toFixed(3)} loss ${logs.loss.toFixed(3)}`)}
+  });
+  data.X.dispose(); data.Y.dispose();
+  usingTrained=true;
+  setStatus('Training complete. Click Save model to persist per box, or Analyze to use it now.');
+};
+saveModelBtn.onclick=async()=>{
+  if(!headModel){ return alert('Train a model first.'); }
+  const key = 'indexeddb://phonebox-'+(boxSel.value||'default');
+  await headModel.save(key);
+  localStorage.setItem('phonebox-dataset-'+(boxSel.value||'default'), JSON.stringify(dataset));
+  setStatus('Model saved for '+boxSel.value);
+};
+loadModelBtn.onclick=async()=>{
+  try{
+    const key='indexeddb://phonebox-'+(boxSel.value||'default');
+    headModel = await tf.loadLayersModel(key);
+    await ensureBackbone();
+    const ds = localStorage.getItem('phonebox-dataset-'+(boxSel.value||'default'));
+    if(ds) dataset = JSON.parse(ds); else dataset={present:[], empty:[]};
+    updateTrainStatus();
+    usingTrained=true;
+    setStatus('Model loaded for '+boxSel.value);
+  }catch(e){ alert('No saved model for this box yet.'); }
+};
+clearModelBtn.onclick=async()=>{
+  // best-effort clear
+  dataset={present:[], empty:[]}; updateTrainStatus();
+  usingTrained=false; headModel=null;
+  setStatus('Cleared local dataset and model handle.');
+};
+exportDSBtn.onclick=()=>{
+  const blob=new Blob([JSON.stringify(dataset)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='phonebox_dataset_'+(boxSel.value||'box')+'.json'; a.click();
+};
+importDSInp.addEventListener('change', ()=>{
+  const f=importDSInp.files[0]; if(!f) return;
+  const r=new FileReader(); r.onload=()=>{ try{ dataset=JSON.parse(r.result||'{}'); updateTrainStatus(); setStatus('Imported dataset.'); }catch{ alert('Invalid JSON.'); } };
+  r.readAsText(f);
+});
+
+/* ====== Predict / Analyze ====== */
+btnAnalyze.onclick=async()=>{
+  if(rois.length!==TOTAL) return alert('Align slots first.');
+  let preds=null;
+  if(usingTrained && headModel && mobileNet){
+    setStatus('Predicting with trained model…');
+    preds = await Promise.all(rois.map(async r=>{
+      const dataURL=cropSlotToDataURL(r);
+      const t=await dataURLToTensor(dataURL);
+      const emb=mobileNet.infer(t,'conv_preds');
+      const p=headModel.predict(emb).dataSync()[0];
+      t.dispose(); emb.dispose();
+      return p>=0.5;
+    }));
+  }else{
+    setStatus('No trained model — using fallback seam detector.');
+    preds = rois.map(r=> seamHeuristic(r));
+  }
+  occ=preds;
+  paintOverlay();
+  const names=namesForBox(boxSel.value||'');
+  resultsBody.innerHTML='';
+  for(let i=0;i<TOTAL;i++){
+    const slot=i+1, expected=names[slot]||'';
+    const status = occ[i] ? (expected?'present':'unexpected phone') : (expected?'missing':'empty');
+    const tr=document.createElement('tr');
+    tr.className = status==='missing'?'missing':(status==='present'?'ok':'');
+    tr.innerHTML=`<td>${slot}</td><td>${expected}</td><td><span class="pill">${status}</span></td>`;
+    resultsBody.appendChild(tr);
+  }
+  [...miniGrid.children].forEach((d,i)=>{ d.classList.toggle('present',!!occ[i]); d.classList.toggle('empty',!occ[i]); });
+  setStatus('Done. Green = phone, Red = empty.');
+};
+function paintOverlay(){
+  clearOverlay();
+  for(let i=0;i<rois.length;i++){
+    const r=rois[i];
+    ctx.fillStyle = occ[i] ? 'rgba(0,200,0,.35)' : 'rgba(255,0,0,.35)';
+    ctx.fillRect(r.x,r.y,r.w,r.h); rect(r,'#fff',1.4);
+  }
+}
+
+/* ====== seam heuristic (fallback) ====== */
+function seamHeuristic(r){
+  const c=document.createElement('canvas'); c.width=r.w; c.height=r.h; const cx=c.getContext('2d');
+  cx.drawImage(preview, r.x,r.y,r.w,r.h, 0,0,r.w,r.h);
+  const imgData=cx.getImageData(0,0,r.w,r.h);
+  const mat=cv.matFromImageData(imgData);
+  const gray=new cv.Mat(); cv.cvtColor(mat,gray,cv.COLOR_RGBA2GRAY);
+  const y0=Math.round(r.h*0.06), y1=Math.round(r.h*0.60), xL=Math.round(r.w*0.08), xR=Math.round(r.w*0.92);
+  const search=gray.roi(new cv.Rect(xL,y0,Math.max(12,xR-xL),Math.max(12,y1-y0)));
+  const sob16=new cv.Mat(), sob=new cv.Mat(); cv.Sobel(search,sob16,cv.CV_16S,0,1,3,1,0,cv.BORDER_DEFAULT); cv.convertScaleAbs(sob16,sob);
+  const blur=new cv.Mat(); cv.GaussianBlur(sob,blur,new cv.Size(3,3),0);
+  const thr=new cv.Mat(); cv.threshold(blur,thr,0,255,cv.THRESH_BINARY|cv.THRESH_OTSU);
+  const hS=thr.rows, wS=thr.cols;
+  let best=0; for(let y=0;y<hS;y++){ const p=thr.ptr(y); let c=0; for(let x=0;x<wS;x++) if(p[x]) c++; best=Math.max(best, c/wS); }
+  // darkness band
+  const bandTop=Math.min(r.h-4, (y0+Math.round((y1-y0)*0.5)) + Math.round(r.h*0.02));
+  const bandH=Math.max(6, Math.round(r.h*0.18));
+  const bandY=Math.min(r.h-bandH, bandTop);
+  const band=gray.roi(new cv.Rect(Math.round(r.w*0.12), bandY, Math.round(r.w*0.76), bandH));
+  const m=new cv.Mat(), s=new cv.Mat(); cv.meanStdDev(band,m,s);
+  const bMean=m.doubleAt(0,0); const foamTop=gray.roi(new cv.Rect(Math.round(r.w*0.10), 0, Math.round(r.w*0.80), Math.max(4,Math.round(r.h*0.10))));
+  const m2=new cv.Mat(), s2=new cv.Mat(); cv.meanStdDev(foamTop,m2,s2);
+  const foam=m2.doubleAt(0,0);
+  [mat,gray,search,sob16,sob,blur,thr,band,foamTop,m,s,m2,s2].forEach(x=>x.delete());
+  return (best>=0.34 && (foam-bMean>=8)) || (best>=0.46);
+}
+
+/* ====== reset ====== */
+btnReset.onclick=()=>{
+  rowY=[]; wallsPerRow=[]; rois=[]; picked.clear(); occ=[]; usingTrained=false;
   resultsBody.innerHTML=''; clearOverlay(); preview.style.display='none'; photo.value='';
   setStatus('Reset. Upload a new photo.');
-});
-(function initGrid(){ for(let i=0;i<TOTAL;i++){ const d=document.createElement('div'); d.className='slot'; d.innerHTML=`<span>#${i+1}</span>`; miniGrid.appendChild(d);} })();
-window.addEventListener('resize', ()=>{ if(preview.src) sizeOverlayToImage(preview.naturalWidth, preview.naturalHeight);});
+};
+
+/* ====== utilities ====== */
+function namesForBox(boxId){
+  const out={}; for(const r of roster){
+    const sec=(r['Security Number']||r['SecurityNumber']||'').toUpperCase().replace(/\s+/g,'');
+    const m=sec.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/);
+    if(!m) continue; if(m[1]===boxId) out[+m[2]]=r['Full Name']||r['FullName']||'';
+  } return out;
+}
 </script>
 </body>
 </html>
