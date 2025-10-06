@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box — In-Browser Training (TF.js) + Auto/Manual Alignment</title>
+<title>Phone Box – Auto/Manual Align + Robust Slot Detection</title>
 <style>
   :root{--bg:#0b1020;--card:#10183a;--mut:#9ab0e0}
   *{box-sizing:border-box}
@@ -35,7 +35,7 @@
 </style>
 </head>
 <body>
-<header>📱 Phone Box — Train in your browser. Saves per-box model. Auto/Manual alignment. Roster support.</header>
+<header>📱 Phone Box — Auto/Manual alignment above blue numbers + robust “phone present” detection with live tuning.</header>
 
 <main>
   <section class="card">
@@ -72,60 +72,42 @@
     <div class="modes" style="margin-top:8px">
       <button id="btnAuto" class="primary">Auto align</button>
       <button id="btnManual">Manual align</button>
-      <button id="btnTrain">Train</button>
-      <button id="btnPredict">Predict</button>
-    </div>
-
-    <div class="toolbar">
       <button id="btnAnalyze">Analyze</button>
       <button id="btnReset">Reset</button>
-      <label><input id="showGuides" type="checkbox" checked> Show guides</label>
     </div>
 
-    <details>
-      <summary>Training panel</summary>
-      <div class="fine">Select slot(s) below, then click “Add Present” or “Add Empty”, repeat a few times, then “Train model”.</div>
-      <div class="toolbar">
-        <button id="addPresent">➕ Add Present</button>
-        <button id="addEmpty">➕ Add Empty</button>
-      </div>
-      <div class="toolbar">
-        <label>Epochs <input id="epochs" type="number" value="12" min="1" max="50" style="width:110px"></label>
-        <button id="trainModel" class="primary">Train model</button>
-      </div>
-      <div class="toolbar">
-        <button id="saveModel">💾 Save model</button>
-        <button id="loadModel">📥 Load model</button>
-        <button id="clearModel">🧹 Clear model</button>
-      </div>
-      <div class="toolbar">
-        <button id="exportDS">⬇️ Export dataset</button>
-        <input id="importDS" type="file" accept=".json" style="width:auto">
-      </div>
-      <div class="fine" id="trainStatus">Samples: 0 present / 0 empty</div>
-    </details>
-
-    <details>
+    <details open>
       <summary>Auto align options</summary>
       <label>Blue sensitivity (HSV Δ)</label>
       <input type="range" id="blueDelta" min="0" max="40" value="18">
-      <small class="fine">Raise if it can’t find all 5 blue strips.</small>
+      <small class="fine">Raise if it can’t find all 5 blue number bars.</small>
     </details>
+
+    <details open>
+      <summary>Detection tuning</summary>
+      <label>Presence threshold <span id="thVal">0.55</span></label>
+      <input id="thresh" type="range" min="0.30" max="0.80" step="0.01" value="0.55">
+      <label>Band top % <span id="btVal">6</span></label>
+      <input id="bandTop" type="range" min="0" max="20" step="1" value="6">
+      <label>Band bottom % <span id="bbVal">60</span></label>
+      <input id="bandBot" type="range" min="40" max="80" step="1" value="60">
+      <label><input id="showScores" type="checkbox"> Show per-slot scores</label>
+    </details>
+
+    <div class="toolbar">
+      <label><input id="showGuides" type="checkbox" checked> Show guides</label>
+    </div>
   </section>
 </main>
 
-<!-- TF.js + MobileNet for transfer learning -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0"></script>
-<!-- OpenCV.js for tick-mark detection -->
+<!-- OpenCV.js for alignment & image ops -->
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
-
 <script>
-/* ====== constants / state ====== */
+/* ========= constants / state ========= */
 const ROWS=5, COLS=12, TOTAL=ROWS*COLS;
-const SLOT_H_FRAC=0.42, SLOT_TOP_PAD=0.04;
-const FEAT_SIZE=1024;          // MobileNet v2 embeddings (conv_preds)
-const PATCH=160;               // crop size for classifier
+// Taller ROI and slight gap above blue strip to capture ports/phones
+const SLOT_H_FRAC=0.52;
+const SLOT_TOP_PAD=0.06;
 
 const stage=document.getElementById('stage');
 const overlay=document.getElementById('overlay'); const ctx=overlay.getContext('2d');
@@ -138,38 +120,26 @@ const miniGrid=document.getElementById('miniGrid');
 
 const btnAuto=document.getElementById('btnAuto');
 const btnManual=document.getElementById('btnManual');
-const btnTrain=document.getElementById('btnTrain');
-const btnPredict=document.getElementById('btnPredict');
-
 const btnAnalyze=document.getElementById('btnAnalyze');
 const btnReset=document.getElementById('btnReset');
 
-const addPresent=document.getElementById('addPresent');
-const addEmpty=document.getElementById('addEmpty');
-const trainModelBtn=document.getElementById('trainModel');
-const saveModelBtn=document.getElementById('saveModel');
-const loadModelBtn=document.getElementById('loadModel');
-const clearModelBtn=document.getElementById('clearModel');
-const exportDSBtn=document.getElementById('exportDS');
-const importDSInp=document.getElementById('importDS');
-
-const trainStatus=document.getElementById('trainStatus');
-
-const photo=document.getElementById('photo'); const blueDelta=document.getElementById('blueDelta');
+const blueDelta=document.getElementById('blueDelta');
 const showGuides=document.getElementById('showGuides');
+
+const threshEl=document.getElementById('thresh'), thVal=document.getElementById('thVal');
+const bandTopEl=document.getElementById('bandTop'), btVal=document.getElementById('btVal');
+const bandBotEl=document.getElementById('bandBot'), bbVal=document.getElementById('bbVal');
+const showScores=document.getElementById('showScores');
 
 const rosterFile=document.getElementById('rosterFile'); const rosterStatus=document.getElementById('rosterStatus');
 const boxSel=document.getElementById('box');
+const photo=document.getElementById('photo');
 
 let cvReady=false, mode='view';
-let current=null;           // image loaded flag
-let rowY=[], wallsPerRow=[], rois=[], picked=new Set(), occ=[];
+let rowY=[], wallsPerRow=[], rois=[], occ=[]; // geometry + predictions
 let roster=[];
-let mobileNet=null, headModel=null;  // tfjs models
-let dataset={present:[], empty:[]};  // data URLs of slot crops
-let usingTrained=false;
 
-/* ====== init ====== */
+/* ========= init ========= */
 window.Module={onRuntimeInitialized(){ cvReady=true; }};
 (function fillBoxes(){
   const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
@@ -178,17 +148,21 @@ window.Module={onRuntimeInitialized(){ cvReady=true; }};
 })();
 (function initGrid(){
   for(let i=0;i<TOTAL;i++){
-    const d=document.createElement('div'); d.className='slot'; d.dataset.idx=i; d.innerHTML=`<span>#${i+1}</span>`;
-    d.addEventListener('click',()=>{
-      if(mode!=='train') return;
-      if(picked.has(i)) picked.delete(i); else picked.add(i);
-      d.style.outline = picked.has(i)?'3px solid #ffd54a':'';
-    });
+    const d=document.createElement('div'); d.className='slot'; d.innerHTML=`<span>#${i+1}</span>`;
     miniGrid.appendChild(d);
   }
 })();
+[threshEl,bandTopEl,bandBotEl].forEach(el=>{
+  el.addEventListener('input', ()=>{
+    thVal.textContent=(+threshEl.value).toFixed(2);
+    btVal.textContent=bandTopEl.value;
+    bbVal.textContent=bandBotEl.value;
+  });
+});
+thVal.textContent=(+threshEl.value).toFixed(2);
+btVal.textContent=bandTopEl.value; bbVal.textContent=bandBotEl.value;
 
-/* ====== helpers ====== */
+/* ========= helpers ========= */
 function setStatus(t){ statusEl.textContent=t; }
 function sizeOverlayToImage(w,h){
   const sw=stage.clientWidth, sh=Math.max(260, Math.round(sw*(h/w)));
@@ -201,9 +175,9 @@ function sizeOverlayToImage(w,h){
 function clearOverlay(){ ctx.clearRect(0,0,overlay.width,overlay.height); }
 function line(x1,y1,x2,y2,style='#32d0ff',lw=2){ ctx.strokeStyle=style; ctx.lineWidth=lw/(window.devicePixelRatio||1); ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
 function rect(r,style='#fff',lw=1.6){ ctx.strokeStyle=style; ctx.lineWidth=lw/(window.devicePixelRatio||1); ctx.strokeRect(r.x,r.y,r.w,r.h); }
-function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
 
-/* ====== roster load (project-page safe) ====== */
+/* ========= roster load (GH Pages safe) ========= */
 function parseCSV(text){
   const rows=[]; let row=[],cur='',q=false; const push=()=>{row.push(cur);cur='';};
   for(let i=0;i<text.length;i++){
@@ -243,32 +217,25 @@ function namesForBox(id){
   return out;
 }
 
-/* ====== image load ====== */
+/* ========= image load ========= */
 photo.addEventListener('change', e=>{
   const f=e.target.files[0]; if(!f) return;
   const url=URL.createObjectURL(f);
   const im=new Image(); im.onload=()=>{
     preview.src=url; preview.style.display='block';
     sizeOverlayToImage(im.naturalWidth, im.naturalHeight);
-    clearOverlay(); rowY=[]; wallsPerRow=[]; rois=[]; picked.clear(); occ=[]; usingTrained=false;
-    setStatus('Photo loaded. Use Auto align or Manual.');
+    clearOverlay(); rowY=[]; wallsPerRow=[]; rois=[]; occ=[];
+    setStatus('Photo loaded. Use Auto align (or Manual).');
   }; im.src=url;
 });
 window.addEventListener('resize',()=>{ if(preview.src) sizeOverlayToImage(preview.naturalWidth, preview.naturalHeight); });
 
-/* ====== modes ====== */
-function setMode(m){ mode=m; modePill.textContent='Mode: '+m[0].toUpperCase()+m.slice(1); }
-btnAuto.onclick=()=>{ setMode('auto'); autoAlign(); };
-btnManual.onclick=()=>{ setMode('manual'); manualInit(); };
-btnTrain.onclick=()=>{ setMode('train'); setStatus('Train: click slot(s), then Add Present/Empty; repeat; then Train model.'); };
-btnPredict.onclick=()=>{ setMode('predict'); setStatus('Predict: click Analyze to run trained model.'); };
-
-/* ====== Auto align (find blue strips + tick walls) ====== */
-function autoAlign(){
+/* ========= Auto align (find blue bars + tick walls) ========= */
+btnAuto.onclick=()=>{
   if(!cvReady||!preview.src) return alert('Need image + OpenCV.');
   const W=preview.naturalWidth, H=preview.naturalHeight;
 
-  // 1) downscale for speed
+  // downscale for speed
   const scale=1600/Math.max(W,H);
   const c=document.createElement('canvas'); const cw=Math.round(W*Math.min(1,scale)), ch=Math.round(H*Math.min(1,scale));
   c.width=cw; c.height=ch; c.getContext('2d').drawImage(preview,0,0,W,H,0,0,cw,ch);
@@ -276,16 +243,14 @@ function autoAlign(){
   const src=cv.matFromImageData(imgData);
   const hsv=new cv.Mat(); cv.cvtColor(src,hsv,cv.COLOR_RGBA2RGB); cv.cvtColor(hsv,hsv,cv.COLOR_RGB2HSV);
 
-  // 2) blue mask
   const delta=+blueDelta.value;
   const lower=new cv.Mat(hsv.rows,hsv.cols,hsv.type(),[100-delta,60,40,0]);
   const upper=new cv.Mat(hsv.rows,hsv.cols,hsv.type(),[130+delta,255,255,255]);
   const mask=new cv.Mat(); cv.inRange(hsv,lower,upper,mask);
   const k=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(21,5));
   cv.morphologyEx(mask,mask,cv.MORPH_CLOSE,k); cv.morphologyEx(mask,mask,cv.MORPH_OPEN,k);
-  const contours=new cv.MatVector(), hier=new cv.Mat(); cv.findContours(mask,contours,hier,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
 
-  // 3) pick 5 bars
+  const contours=new cv.MatVector(), hier=new cv.Mat(); cv.findContours(mask,contours,hier,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
   const bars=[];
   for(let i=0;i<contours.size();i++){
     const r=cv.boundingRect(contours.get(i)); const ar=r.width/r.height;
@@ -294,22 +259,22 @@ function autoAlign(){
   bars.sort((a,b)=>a.y-b.y); if(bars.length>5) bars.splice(5);
   if(bars.length<5){ setStatus('Could not find 5 number strips. Raise Blue sensitivity or use Manual.'); [src,hsv,lower,upper,mask,contours,hier].forEach(m=>m.delete()); return; }
 
-  // 4) map bar centers to full-res Y
+  // map bar centers to full-res Y
   rowY = bars.map(b => (b.y + b.height/2) / Math.min(1,scale));
 
-  // 5) for each bar, get 13 vertical walls by tick projection in full-res
+  // get 13 vertical walls per row by projecting the strip region at full res
   wallsPerRow=[];
   for(const b of bars){
     const x1=(b.x-10)/Math.min(1,scale), x2=(b.x+b.width+10)/Math.min(1,scale);
     const y1=(b.y-8)/Math.min(1,scale),  y2=(b.y+b.height+8)/Math.min(1,scale);
     wallsPerRow.push( getWallsFromStripRegion([x1,x2,y1,y2]) );
   }
-
-  buildROIsFromRowsAndWalls(rowY, wallsPerRow, W, H);
+  buildROIs(rowY, wallsPerRow, W, H);
   drawGuides(rowY, wallsPerRow, W, H);
   setStatus('Auto aligned. If slightly off, switch to Manual and drag.');
+
   [src,hsv,lower,upper,mask,contours,hier].forEach(m=>m.delete());
-}
+};
 function getWallsFromStripRegion([x1,x2,y1,y2]){
   const W=preview.naturalWidth, H=preview.naturalHeight;
   const sx=Math.max(0,Math.floor(x1)), ex=Math.min(W,Math.ceil(x2));
@@ -331,17 +296,18 @@ function getWallsFromStripRegion([x1,x2,y1,y2]){
   return walls.sort((a,b)=>a-b);
 }
 
-/* ====== Manual align (drag) ====== */
-function manualInit(){
+/* ========= Manual align (drag) ========= */
+btnManual.onclick=()=>{
   if(!preview.src) return alert('Upload a photo first.');
   const W=preview.naturalWidth, H=preview.naturalHeight;
   if(!rowY.length){ for(let i=0;i<ROWS;i++) rowY[i]=Math.round((i+1)*(H/(ROWS+1))); }
   const walls = Array.from({length:13},(_,i)=> Math.round(i*(W-1)/12));
   wallsPerRow = Array.from({length:ROWS},()=>walls);
-  buildROIsFromRowsAndWalls(rowY, wallsPerRow, W, H);
+  buildROIs(rowY, wallsPerRow, W, H);
   drawGuides(rowY, wallsPerRow, W, H);
-  setStatus('Drag near cyan line (row) or white line (wall). Then Train/Predict/Analyze.');
-}
+  setStatus('Drag near cyan line (row) or white line (wall). Then Analyze.');
+  mode='manual'; modePill.textContent='Mode: Manual';
+};
 let drag=null;
 overlay.addEventListener('pointerdown', e=>{
   if(mode!=='manual') return;
@@ -352,11 +318,11 @@ overlay.addEventListener('pointerdown', e=>{
   if(bestW<22){ drag={type:'wall', idx:wi}; }
 });
 overlay.addEventListener('pointermove', e=>{
-  if(!drag || mode!=='manual') return;
+  if(!drag||mode!=='manual') return;
   const pt=toImg(e), W=preview.naturalWidth, H=preview.naturalHeight;
   if(drag.type==='row'){ rowY[drag.idx]=clamp(Math.round(pt.y),0,H-1); }
   else{ const x=clamp(Math.round(pt.x),0,W-1); for(let r=0;r<ROWS;r++) wallsPerRow[r][drag.idx]=x; }
-  buildROIsFromRowsAndWalls(rowY, wallsPerRow, W, H);
+  buildROIs(rowY, wallsPerRow, W, H);
   drawGuides(rowY, wallsPerRow, W, H);
 });
 window.addEventListener('pointerup', ()=> drag=null);
@@ -369,13 +335,14 @@ function toImg(ev){
   return {x,y};
 }
 
-/* ====== Build ROIs + Draw ====== */
-function buildROIsFromRowsAndWalls(rowsY, perRowWalls, W, H){
+/* ========= Build ROIs / Draw ========= */
+function buildROIs(rowsY, perRowWalls, W, H){
   rois=[];
   const gaps=[]; for(let i=1;i<rowsY.length;i++) gaps.push(rowsY[i]-rowsY[i-1]);
   const avgGap=gaps.length?gaps.reduce((a,b)=>a+b,0)/gaps.length:H/6;
   for(let r=0;r<ROWS;r++){
-    const yB=rowsY[r]; const gap=(r<ROWS-1?rowsY[r+1]-rowsY[r]:avgGap);
+    const yB=rowsY[r];
+    const gap=(r<ROWS-1?rowsY[r+1]-rowsY[r]:avgGap);
     const h=Math.max(10,Math.round(gap*SLOT_H_FRAC));
     const yT=Math.max(0,Math.round(yB - h - gap*SLOT_TOP_PAD));
     const yBot=Math.max(yT+8, Math.round(yB - gap*SLOT_TOP_PAD));
@@ -396,138 +363,92 @@ function drawGuides(rowsY, perRowWalls, W, H){
   rois.forEach(r=>rect(r,'#fff',1.6));
 }
 
-/* ====== TRAINING (TF.js transfer learning) ====== */
-async function ensureBackbone(){
-  if(mobileNet) return;
-  setStatus('Loading MobileNet backbone…');
-  // MobileNet v2 — we’ll use embeddings from the head layer
-  mobileNet = await mobilenet.load({version:2, alpha:1.0});
-  setStatus('Backbone ready.');
+/* ========= Robust slot confidence ========= */
+function lapVar(matGray){
+  const lap16=new cv.Mat(), lap=new cv.Mat();
+  cv.Laplacian(matGray, lap16, cv.CV_16S, 3, 1, 0, cv.BORDER_DEFAULT);
+  cv.convertScaleAbs(lap16, lap);
+  const mean=new cv.Mat(), std=new cv.Mat(); cv.meanStdDev(lap, mean, std);
+  const v = std.doubleAt(0,0)**2;
+  [lap16,lap,mean,std].forEach(m=>m.delete());
+  return v;
 }
-function cropSlotToDataURL(r, size=PATCH){
-  const c=document.createElement('canvas'); c.width=size; c.height=size; const cx=c.getContext('2d');
-  cx.imageSmoothingQuality='high';
-  cx.drawImage(preview, r.x, r.y, r.w, r.h, 0,0,size,size);
-  return c.toDataURL('image/jpeg', 0.8);
-}
-function updateTrainStatus(){
-  trainStatus.textContent=`Samples: ${dataset.present.length} present / ${dataset.empty.length} empty`;
-}
-addPresent.onclick=()=>addSamples('present');
-addEmpty.onclick =()=>addSamples('empty');
-function addSamples(label){
-  if(rois.length!==TOTAL){ alert('Align rows & slots first (Auto or Manual).'); return; }
-  if(picked.size===0){ alert('In Train mode, click one or more slots in the mini grid.'); return; }
-  for(const i of picked){
-    const r=rois[i];
-    const dataURL=cropSlotToDataURL(r);
-    dataset[label].push({box:boxSel.value||'', idx:i, dataURL});
-  }
-  picked.clear(); [...miniGrid.children].forEach(d=>d.style.outline='');
-  updateTrainStatus();
-  setStatus(`Added ${label} samples.`);
-}
-function dataURLToTensor(dataURL){
-  return new Promise(res=>{
-    const im=new Image(); im.onload=()=>{
-      const c=document.createElement('canvas'); c.width=PATCH; c.height=PATCH; const cx=c.getContext('2d');
-      cx.drawImage(im,0,0, PATCH, PATCH);
-      const imgData=cx.getImageData(0,0,PATCH,PATCH);
-      const t=tf.browser.fromPixels(imgData).toFloat().div(255).expandDims(); // [1, H, W, 3]
-      res(t);
-    }; im.src=dataURL;
-  });
-}
-async function buildDatasetTensors(){
-  const xs=[], ys=[];
-  for(const s of dataset.present){ const t=await dataURLToTensor(s.dataURL); const emb=mobileNet.infer(t,'conv_preds'); xs.push(emb); ys.push(1); t.dispose(); }
-  for(const s of dataset.empty){ const t=await dataURLToTensor(s.dataURL); const emb=mobileNet.infer(t,'conv_preds'); xs.push(emb); ys.push(0); t.dispose(); }
-  if(xs.length===0) return null;
-  const X=tf.concat(xs,0); xs.forEach(t=>t.dispose());
-  const Y=tf.tensor(ys).expandDims(1);
-  return {X,Y};
-}
-function buildHead(){
-  // simple dense head on top of embeddings
-  const m=tf.sequential();
-  m.add(tf.layers.flatten({inputShape:[1,1,FEAT_SIZE]}));
-  m.add(tf.layers.dense({units:128, activation:'relu'}));
-  m.add(tf.layers.dropout({rate:0.3}));
-  m.add(tf.layers.dense({units:1, activation:'sigmoid'}));
-  m.compile({optimizer: tf.train.adam(1e-3), loss:'binaryCrossentropy', metrics:['accuracy']});
-  return m;
-}
-trainModelBtn.onclick=async()=>{
-  if(!preview.src) return alert('Load a photo & align slots first.');
-  if(dataset.present.length<3 || dataset.empty.length<3) return alert('Add at least 3 present and 3 empty samples.');
-  await ensureBackbone();
-  const data=await buildDatasetTensors(); if(!data){ alert('No data.'); return; }
-  headModel = buildHead();
-  const ep = clamp(parseInt(document.getElementById('epochs').value||'12',10),1,50);
-  setStatus('Training in browser…');
-  await headModel.fit(data.X, data.Y, {
-    epochs: ep, batchSize: 16, shuffle: true,
-    callbacks: { onEpochEnd:(e,logs)=> setStatus(`Training… epoch ${e+1}/${ep} — acc ${logs.acc?.toFixed(3)} loss ${logs.loss.toFixed(3)}`)}
-  });
-  data.X.dispose(); data.Y.dispose();
-  usingTrained=true;
-  setStatus('Training complete. Click Save model to persist per box, or Analyze to use it now.');
-};
-saveModelBtn.onclick=async()=>{
-  if(!headModel){ return alert('Train a model first.'); }
-  const key = 'indexeddb://phonebox-'+(boxSel.value||'default');
-  await headModel.save(key);
-  localStorage.setItem('phonebox-dataset-'+(boxSel.value||'default'), JSON.stringify(dataset));
-  setStatus('Model saved for '+boxSel.value);
-};
-loadModelBtn.onclick=async()=>{
-  try{
-    const key='indexeddb://phonebox-'+(boxSel.value||'default');
-    headModel = await tf.loadLayersModel(key);
-    await ensureBackbone();
-    const ds = localStorage.getItem('phonebox-dataset-'+(boxSel.value||'default'));
-    if(ds) dataset = JSON.parse(ds); else dataset={present:[], empty:[]};
-    updateTrainStatus();
-    usingTrained=true;
-    setStatus('Model loaded for '+boxSel.value);
-  }catch(e){ alert('No saved model for this box yet.'); }
-};
-clearModelBtn.onclick=async()=>{
-  // best-effort clear
-  dataset={present:[], empty:[]}; updateTrainStatus();
-  usingTrained=false; headModel=null;
-  setStatus('Cleared local dataset and model handle.');
-};
-exportDSBtn.onclick=()=>{
-  const blob=new Blob([JSON.stringify(dataset)],{type:'application/json'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='phonebox_dataset_'+(boxSel.value||'box')+'.json'; a.click();
-};
-importDSInp.addEventListener('change', ()=>{
-  const f=importDSInp.files[0]; if(!f) return;
-  const r=new FileReader(); r.onload=()=>{ try{ dataset=JSON.parse(r.result||'{}'); updateTrainStatus(); setStatus('Imported dataset.'); }catch{ alert('Invalid JSON.'); } };
-  r.readAsText(f);
-});
+function slotConfidence(r){
+  const c=document.createElement('canvas'); c.width=r.w; c.height=r.h;
+  const cx=c.getContext('2d', {willReadFrequently:true});
+  cx.drawImage(preview, r.x,r.y,r.w,r.h, 0,0,r.w,r.h);
+  const imgData=cx.getImageData(0,0,r.w,r.h);
+  const mat=cv.matFromImageData(imgData);
+  const gray=new cv.Mat(); cv.cvtColor(mat,gray,cv.COLOR_RGBA2GRAY);
 
-/* ====== Predict / Analyze ====== */
-btnAnalyze.onclick=async()=>{
+  const y0=Math.round(r.h*(+bandTopEl.value/100));
+  const y1=Math.round(r.h*(+bandBotEl.value/100));
+  const xL=Math.round(r.w*0.10), xR=Math.round(r.w*0.90);
+  const wS=Math.max(12,xR-xL), hS=Math.max(12,y1-y0);
+
+  // Edge density
+  const roi=gray.roi(new cv.Rect(xL,y0,wS,hS));
+  const sob16=new cv.Mat(), sob=new cv.Mat();
+  cv.Sobel(roi,sob16,cv.CV_16S,0,1,3,1,0,cv.BORDER_DEFAULT);
+  cv.convertScaleAbs(sob16,sob);
+  const blur=new cv.Mat(); cv.GaussianBlur(sob,blur,new cv.Size(3,3),0);
+  const thr=new cv.Mat(); cv.threshold(blur,thr,0,255,cv.THRESH_BINARY|cv.THRESH_OTSU);
+  let edgeFrac=0;
+  for(let y=0;y<thr.rows;y++){ const p=thr.ptr(y); let c1=0; for(let x=0;x<thr.cols;x++) if(p[x]) c1++; edgeFrac=Math.max(edgeFrac, c1/thr.cols); }
+
+  // Darkness vs foam
+  const bandTop = Math.min(r.h-4, y0 + Math.round(hS*0.55));
+  const bandH   = Math.max(6, Math.round(r.h*0.18));
+  const bandY   = Math.min(r.h-bandH, bandTop);
+  const band=gray.roi(new cv.Rect(Math.round(r.w*0.12), bandY, Math.round(r.w*0.76), bandH));
+  const m1=new cv.Mat(), s1=new cv.Mat(); cv.meanStdDev(band,m1,s1);
+  const bandMean=m1.doubleAt(0,0);
+
+  const foamTop=gray.roi(new cv.Rect(Math.round(r.w*0.12), 0, Math.round(r.w*0.76), Math.max(4,Math.round(r.h*0.08))));
+  const m2=new cv.Mat(), s2=new cv.Mat(); cv.meanStdDev(foamTop,m2,s2);
+  const foamMean=m2.doubleAt(0,0);
+  const darkGain= Math.max(0, Math.min(1, (foamMean-bandMean)/30 ));
+
+  // Texture (Laplacian variance)
+  const lv=lapVar(band);
+  const tex = Math.max(0, Math.min(1, lv/300.0 ));
+
+  const conf = Math.max(0, Math.min(1, 0.45*edgeFrac + 0.35*darkGain + 0.20*tex ));
+  [mat,gray,roi,sob16,sob,blur,thr,band,foamTop,m1,s1,m2,s2].forEach(m=>m.delete());
+  return {conf, parts:{edgeFrac,darkGain,tex}};
+}
+
+/* ========= Analyze ========= */
+btnAnalyze.onclick=()=>{
   if(rois.length!==TOTAL) return alert('Align slots first.');
-  let preds=null;
-  if(usingTrained && headModel && mobileNet){
-    setStatus('Predicting with trained model…');
-    preds = await Promise.all(rois.map(async r=>{
-      const dataURL=cropSlotToDataURL(r);
-      const t=await dataURLToTensor(dataURL);
-      const emb=mobileNet.infer(t,'conv_preds');
-      const p=headModel.predict(emb).dataSync()[0];
-      t.dispose(); emb.dispose();
-      return p>=0.5;
-    }));
-  }else{
-    setStatus('No trained model — using fallback seam detector.');
-    preds = rois.map(r=> seamHeuristic(r));
+  const T=+threshEl.value;
+
+  occ = rois.map(r=>{
+    const {conf,parts}=slotConfidence(r);
+    r.__score=conf; r.__parts=parts;
+    return conf>=T;
+  });
+
+  clearOverlay();
+  for(let i=0;i<rois.length;i++){
+    const r=rois[i];
+    ctx.fillStyle = occ[i] ? 'rgba(0,200,0,.35)' : 'rgba(255,0,0,.35)';
+    ctx.fillRect(r.x,r.y,r.w,r.h); rect(r,'#fff',1.4);
+
+    if(showScores.checked){
+      ctx.fillStyle='rgba(0,0,0,.65)'; ctx.fillRect(r.x+4, r.y+4, 64, 36);
+      ctx.fillStyle='#fff'; ctx.font='12px system-ui';
+      ctx.fillText((r.__score||0).toFixed(2), r.x+8, r.y+18);
+      const parts=r.__parts||{edgeFrac:0, darkGain:0, tex:0};
+      const tot=parts.edgeFrac+parts.darkGain+parts.tex+1e-6;
+      const y=r.y+24; const x=r.x+8, w=56, h=6;
+      const w1=w*(parts.edgeFrac/tot), w2=w*(parts.darkGain/tot), w3=w*(parts.tex/tot);
+      ctx.fillStyle='#7fc8ff'; ctx.fillRect(x, y, w1, h);
+      ctx.fillStyle='#ffd54a'; ctx.fillRect(x+w1, y, w2, h);
+      ctx.fillStyle='#a5f0a0'; ctx.fillRect(x+w1+w2, y, w3, h);
+    }
   }
-  occ=preds;
-  paintOverlay();
+
   const names=namesForBox(boxSel.value||'');
   resultsBody.innerHTML='';
   for(let i=0;i<TOTAL;i++){
@@ -539,58 +460,40 @@ btnAnalyze.onclick=async()=>{
     resultsBody.appendChild(tr);
   }
   [...miniGrid.children].forEach((d,i)=>{ d.classList.toggle('present',!!occ[i]); d.classList.toggle('empty',!occ[i]); });
-  setStatus('Done. Green = phone, Red = empty.');
+  setStatus('Done. Tune the slider if needed.');
 };
-function paintOverlay(){
-  clearOverlay();
-  for(let i=0;i<rois.length;i++){
-    const r=rois[i];
-    ctx.fillStyle = occ[i] ? 'rgba(0,200,0,.35)' : 'rgba(255,0,0,.35)';
-    ctx.fillRect(r.x,r.y,r.w,r.h); rect(r,'#fff',1.4);
-  }
-}
 
-/* ====== seam heuristic (fallback) ====== */
-function seamHeuristic(r){
-  const c=document.createElement('canvas'); c.width=r.w; c.height=r.h; const cx=c.getContext('2d');
-  cx.drawImage(preview, r.x,r.y,r.w,r.h, 0,0,r.w,r.h);
-  const imgData=cx.getImageData(0,0,r.w,r.h);
-  const mat=cv.matFromImageData(imgData);
-  const gray=new cv.Mat(); cv.cvtColor(mat,gray,cv.COLOR_RGBA2GRAY);
-  const y0=Math.round(r.h*0.06), y1=Math.round(r.h*0.60), xL=Math.round(r.w*0.08), xR=Math.round(r.w*0.92);
-  const search=gray.roi(new cv.Rect(xL,y0,Math.max(12,xR-xL),Math.max(12,y1-y0)));
-  const sob16=new cv.Mat(), sob=new cv.Mat(); cv.Sobel(search,sob16,cv.CV_16S,0,1,3,1,0,cv.BORDER_DEFAULT); cv.convertScaleAbs(sob16,sob);
-  const blur=new cv.Mat(); cv.GaussianBlur(sob,blur,new cv.Size(3,3),0);
-  const thr=new cv.Mat(); cv.threshold(blur,thr,0,255,cv.THRESH_BINARY|cv.THRESH_OTSU);
-  const hS=thr.rows, wS=thr.cols;
-  let best=0; for(let y=0;y<hS;y++){ const p=thr.ptr(y); let c=0; for(let x=0;x<wS;x++) if(p[x]) c++; best=Math.max(best, c/wS); }
-  // darkness band
-  const bandTop=Math.min(r.h-4, (y0+Math.round((y1-y0)*0.5)) + Math.round(r.h*0.02));
-  const bandH=Math.max(6, Math.round(r.h*0.18));
-  const bandY=Math.min(r.h-bandH, bandTop);
-  const band=gray.roi(new cv.Rect(Math.round(r.w*0.12), bandY, Math.round(r.w*0.76), bandH));
-  const m=new cv.Mat(), s=new cv.Mat(); cv.meanStdDev(band,m,s);
-  const bMean=m.doubleAt(0,0); const foamTop=gray.roi(new cv.Rect(Math.round(r.w*0.10), 0, Math.round(r.w*0.80), Math.max(4,Math.round(r.h*0.10))));
-  const m2=new cv.Mat(), s2=new cv.Mat(); cv.meanStdDev(foamTop,m2,s2);
-  const foam=m2.doubleAt(0,0);
-  [mat,gray,search,sob16,sob,blur,thr,band,foamTop,m,s,m2,s2].forEach(x=>x.delete());
-  return (best>=0.34 && (foam-bMean>=8)) || (best>=0.46);
-}
-
-/* ====== reset ====== */
+/* ========= Reset ========= */
 btnReset.onclick=()=>{
-  rowY=[]; wallsPerRow=[]; rois=[]; picked.clear(); occ=[]; usingTrained=false;
+  rowY=[]; wallsPerRow=[]; rois=[]; occ=[];
   resultsBody.innerHTML=''; clearOverlay(); preview.style.display='none'; photo.value='';
   setStatus('Reset. Upload a new photo.');
 };
 
-/* ====== utilities ====== */
-function namesForBox(boxId){
-  const out={}; for(const r of roster){
-    const sec=(r['Security Number']||r['SecurityNumber']||'').toUpperCase().replace(/\s+/g,'');
-    const m=sec.match(/^(SM\d|\d{1,2}[A-F])[- ]?(\d{1,2})$/);
-    if(!m) continue; if(m[1]===boxId) out[+m[2]]=r['Full Name']||r['FullName']||'';
-  } return out;
+/* ========= util ========= */
+function buildROIs(rowsY, perRowWalls, W, H){
+  rois=[];
+  const gaps=[]; for(let i=1;i<rowsY.length;i++) gaps.push(rowsY[i]-rowsY[i-1]);
+  const avgGap=gaps.length?gaps.reduce((a,b)=>a+b,0)/gaps.length:H/6;
+  for(let r=0;r<ROWS;r++){
+    const yB=rowsY[r]; const gap=(r<ROWS-1?rowsY[r+1]-rowsY[r]:avgGap);
+    const h=Math.max(10,Math.round(gap*SLOT_H_FRAC));
+    const yT=Math.max(0,Math.round(yB - h - gap*SLOT_TOP_PAD));
+    const yBot=Math.max(yT+8, Math.round(yB - gap*SLOT_TOP_PAD));
+    const walls=perRowWalls[r];
+    for(let c=0;c<COLS;c++){
+      const x0=Math.round(walls[c]), x1=Math.round(walls[c+1]);
+      rois.push({x:x0,y:yT,w:Math.max(1,x1-x0),h:yBot-yT,row:r,col:c});
+    }
+  }
+}
+function toImg(ev){
+  const r=overlay.getBoundingClientRect();
+  const dpr=window.devicePixelRatio||1;
+  const cw=overlay.width/dpr, ch=overlay.height/dpr;
+  const x=(ev.clientX-r.left)/cw*preview.naturalWidth;
+  const y=(ev.clientY-r.top )/ch*preview.naturalHeight;
+  return {x,y};
 }
 </script>
 </body>
