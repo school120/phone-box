@@ -3,18 +3,18 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>Phone Box Scanner — Auto + Manual Fallback</title>
+<title>Phone Box – YOLO (browser) + Manual Fallback</title>
 <style>
   :root{--bg:#0b1020;--card:#10183a;--mut:#9ab0e0}
   *{box-sizing:border-box}
   html,body{height:100%}
-  body{margin:0;background:var(--bg);color:#fff;font-family:system-ui,-apple-system,Inter,Roboto,Segoe UI}
+  body{margin:0;background:var(--bg);color:#fff;font-family:system-ui,-apple-system,Inter,Roboto}
   header{padding:12px 16px;border-bottom:1px solid #ffffff22;font-weight:800}
-  main{max-width:1200px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1.15fr .85fr;gap:16px}
-  .card{background:var(--card);border:1px solid #ffffff22;border-radius:16px;padding:14px}
+  main{max-width:1200px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1.2fr .8fr;gap:16px}
+  .card{background:#10183a;border:1px solid #ffffff22;border-radius:16px;padding:14px}
   label{display:block;margin:8px 0 6px;color:var(--mut);font-size:14px}
   input[type=file],select,button{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #ffffff33;background:#0f1738;color:#fff;font-size:16px}
-  button.primary{background:linear-gradient(180deg,#3bc2f2,#1aa1d9);border:none;font-weight:800}
+  button.primary{background:linear-gradient(180deg,#37c2f2,#1aa1d9);border:none;font-weight:800}
   .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
   .pill{display:inline-block;padding:.25rem .6rem;border-radius:999px;background:#ffffff24;font-size:12px}
   #stage{position:relative;border:1px dashed #ffffff33;border-radius:12px;overflow:hidden;background:#0c1333;min-height:260px;touch-action:none}
@@ -22,18 +22,17 @@
   #overlay{position:absolute;inset:0;pointer-events:auto;z-index:1}
   .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:6px;margin:10px 0}
   .slot{background:#0f1738;border:1px solid #ffffff24;aspect-ratio:3/5;border-radius:8px;position:relative}
-  .slot.present{outline:2px solid rgba(0,200,0,.85)}
-  .slot.empty{outline:2px solid rgba(255,0,0,.85)}
+  .slot.present{outline:2px solid rgba(0,200,0,.9)}
+  .slot.empty{outline:2px solid rgba(255,0,0,.9)}
   .slot span{position:absolute;inset:auto 6px 6px 6px;font-size:12px;color:#9ab0ff}
   table{width:100%;border-collapse:collapse;margin-top:10px}
   th,td{border-bottom:1px solid #ffffff19;padding:8px 6px;text-align:left}
   tr.missing{background:#ff50501a}
-  details{margin-top:8px}
-  @media (max-width: 900px){ main{grid-template-columns:1fr} header{font-size:18px} }
+  @media (max-width:900px){ main{grid-template-columns:1fr} }
 </style>
 </head>
 <body>
-<header>📱 Phone Box — Auto detection with **manual fallback** (drag lines if needed). Anchors slots to the white tick marks between numbers.</header>
+<header>📱 Phone Box — YOLO detector (browser) + number-strip guided slotting + Manual fallback.</header>
 
 <main>
   <section class="card">
@@ -41,14 +40,11 @@
       <img id="preview" alt="preview">
       <canvas id="overlay"></canvas>
     </div>
-
     <div class="toolbar">
-      <span class="pill" id="status">Upload a photo to begin.</span>
+      <span class="pill" id="status">Load model…</span>
       <span class="pill" id="modePill">Mode: Auto</span>
     </div>
-
     <div class="grid" id="miniGrid"></div>
-
     <table>
       <thead><tr><th>Slot</th><th>Expected</th><th>Status</th></tr></thead>
       <tbody id="results"></tbody>
@@ -59,7 +55,7 @@
     <label>Box</label>
     <select id="box"></select>
 
-    <label>Roster CSV (auto-loads <code>/data/roster.csv</code>)</label>
+    <label>Roster CSV (auto-loads /data/roster.csv)</label>
     <div style="display:flex;gap:8px;align-items:center">
       <small id="rosterStatus">Loading…</small>
       <input id="rosterFile" type="file" accept=".csv">
@@ -69,82 +65,67 @@
     <input id="photo" type="file" accept="image/*" capture="environment">
 
     <div class="toolbar">
-      <button id="btnAuto" class="primary" disabled>Auto detect (normal)</button>
-      <button id="btnManual">Manual fallback</button>
-      <button id="btnAnalyze">Analyze</button>
-      <button id="btnReset">Reset</button>
+      <button id="run" class="primary" disabled>Run YOLO (Auto)</button>
+      <button id="manual">Manual fallback</button>
+      <button id="analyze">Analyze</button>
+      <button id="reset">Reset</button>
       <label><input id="showGuides" type="checkbox" checked> Show guides</label>
     </div>
-
-    <details>
-      <summary>Advanced</summary>
-      <label>Blue sensitivity (HSV Δ)</label>
-      <input type="range" id="blueDelta" min="0" max="40" value="18">
-      <small>Raise if auto can’t find all 5 blue strips.</small>
-    </details>
   </section>
 </main>
 
-<!-- OpenCV.js -->
+<!-- onnxruntime-web (WebGL/WebGPU) -->
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
+<!-- OpenCV.js for lightweight post-processing (ticks projection) -->
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 <script>
-/* ================== constants / state ================== */
+/* ======= UI refs/state ======= */
 const ROWS=5, COLS=12, TOTAL=ROWS*COLS;
-const SLOT_H_FRAC = 0.42;   // slot height as fraction of row gap (tight, just above numbers)
-const SLOT_TOP_PAD = 0.04;  // small pad above the strip
+const SLOT_H_FRAC=0.42, SLOT_TOP_PAD=0.04;
 
-const stage = document.getElementById('stage');
-const preview = document.getElementById('preview');
-const overlay = document.getElementById('overlay');
-const ctx = overlay.getContext('2d');
-const showGuides = document.getElementById('showGuides');
-const statusEl = document.getElementById('status');
-const modePill = document.getElementById('modePill');
-const btnAuto = document.getElementById('btnAuto');
-const btnManual = document.getElementById('btnManual');
-const btnAnalyze = document.getElementById('btnAnalyze');
-const btnReset = document.getElementById('btnReset');
-const photo = document.getElementById('photo');
-const blueDelta = document.getElementById('blueDelta');
-const resultsBody = document.getElementById('results');
-const miniGrid = document.getElementById('miniGrid');
+const stage=document.getElementById('stage');
+const overlay=document.getElementById('overlay'); const ctx=overlay.getContext('2d');
+const preview=document.getElementById('preview');
+const statusEl=document.getElementById('status');
+const modePill=document.getElementById('modePill');
+const runBtn=document.getElementById('run');
+const manualBtn=document.getElementById('manual');
+const analyzeBtn=document.getElementById('analyze');
+const resetBtn=document.getElementById('reset');
+const photo=document.getElementById('photo');
+const showGuides=document.getElementById('showGuides');
+const miniGrid=document.getElementById('miniGrid');
+const resultsBody=document.getElementById('results');
 const rosterFile=document.getElementById('rosterFile');
 const rosterStatus=document.getElementById('rosterStatus');
 const boxSel=document.getElementById('box');
 
-let cvReady=false;
-let current=null;          // {mat}
-let rowY = new Array(ROWS).fill(null); // y of blue bars (auto or manual)
-let wallsPerRow=[];        // 5 arrays of 13 x-positions (walls)
-let rois=[];               // 60 slot rects
-let occ=[];                // occupancy
-let manual=false;
-let roster=[];
+let model=null, session=null, current=null; // {img: ImageBitmap, w,h, data:Float32Array, scale, pad}
+let rois=[], rowY=[], wallsPerRow=[], occ=[];
+let manual=false, cvReady=false, roster=[];
 
-/* ================== helpers ================== */
+window.Module = { onRuntimeInitialized(){ cvReady=true; } };
+
 function setStatus(t){ statusEl.textContent=t; }
 function sizeOverlayToImage(w,h){
   const sw=stage.clientWidth, sh=Math.max(260, Math.round(sw*(h/w)));
   stage.style.height=sh+'px';
-  const dpr = window.devicePixelRatio||1;
-  overlay.width  = Math.round(sw*dpr);
-  overlay.height = Math.round(sh*dpr);
+  const dpr=window.devicePixelRatio||1;
+  overlay.width=Math.round(sw*dpr); overlay.height=Math.round(sh*dpr);
   overlay.style.width=sw+'px'; overlay.style.height=sh+'px';
-  const scale = sw/w; ctx.setTransform(dpr*scale,0,0,dpr*scale,0,0);
+  const s=sw/w; ctx.setTransform(dpr*s,0,0,dpr*s,0,0);
 }
 function clearOverlay(){ ctx.clearRect(0,0,overlay.width,overlay.height); }
-function line(x1,y1,x2,y2,style='rgba(50,208,255,.95)',lw=2){ ctx.strokeStyle=style; ctx.lineWidth=lw/(window.devicePixelRatio||1); ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
-function rect(r,style='rgba(255,255,255,.95)',lw=1.6){ ctx.strokeStyle=style; ctx.lineWidth=lw/(window.devicePixelRatio||1); ctx.strokeRect(r.x,r.y,r.w,r.h); }
-function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+function line(x1,y1,x2,y2,style='#32d0ff',lw=2){ ctx.strokeStyle=style; ctx.lineWidth=lw/(window.devicePixelRatio||1); ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
+function rect(r,style='#fff',lw=1.6){ ctx.strokeStyle=style; ctx.lineWidth=lw/(window.devicePixelRatio||1); ctx.strokeRect(r.x,r.y,r.w,r.h); }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
 
-/* ================== box options ================== */
-(function fillBoxes(){
+/* ======= box options + roster load ======= */
+(function boxes(){
   const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
   grades.forEach(g=>letters.forEach(l=>ids.push(g+l))); ids.push('SM1','SM2');
   boxSel.innerHTML=ids.map(x=>`<option>${x}</option>`).join('');
 })();
-
-/* ================== roster ================== */
 function parseCSV(text){
   const rows=[]; let row=[],cur='',q=false; const push=()=>{row.push(cur);cur='';};
   for(let i=0;i<text.length;i++){
@@ -159,9 +140,18 @@ function parseCSV(text){
 }
 async function loadRoster(){
   rosterStatus.textContent='Loading /data/roster.csv…';
-  try{ const res=await fetch('/data/roster.csv',{cache:'no-store'}); if(res.ok){ roster=parseCSV(await res.text()); rosterStatus.textContent='Loaded ✓'; return; } }catch{}
+  try{
+    const res=await fetch('/data/roster.csv',{cache:'no-store'});
+    if(res.ok){ roster=parseCSV(await res.text()); rosterStatus.textContent='Loaded ✓'; return; }
+  }catch{}
   rosterStatus.textContent='Could not load /data/roster.csv (upload below).';
 }
+loadRoster();
+rosterFile.addEventListener('change',()=>{
+  const f=rosterFile.files[0]; if(!f) return;
+  const r=new FileReader(); r.onload=()=>{ roster=parseCSV(r.result||''); rosterStatus.textContent='Loaded from file ✓'; };
+  r.readAsText(f);
+});
 function namesForBox(id){
   const out={};
   for(const r of roster){
@@ -172,181 +162,198 @@ function namesForBox(id){
   }
   return out;
 }
-loadRoster();
-rosterFile.addEventListener('change',()=>{
-  const f=rosterFile.files[0]; if(!f) return;
-  const r=new FileReader(); r.onload=()=>{ roster=parseCSV(r.result||''); rosterStatus.textContent='Loaded from file ✓'; };
-  r.readAsText(f);
-});
 
-/* ================== OpenCV boot ================== */
-window.Module={onRuntimeInitialized(){ cvReady=true; btnAuto.disabled=false; setStatus('OpenCV ready. Upload a photo.'); }};
-window.addEventListener('resize', ()=>{ if(current) sizeOverlayToImage(current.mat.cols,current.mat.rows); });
+/* ======= load ONNX model ======= */
+(async function init(){
+  setStatus('Loading model…');
+  try{
+    session = await ort.InferenceSession.create('model/box_yolo.onnx', {
+      executionProviders: ['webgpu','wasm','webgl'], graphOptimizationLevel: 'all'
+    });
+    setStatus('Model ready. Upload a photo.');
+    runBtn.disabled=false;
+  }catch(e){
+    console.error(e);
+    setStatus('Could not load model at model/box_yolo.onnx');
+  }
+})();
 
-/* ================== image load ================== */
-photo.addEventListener('change', e=>{
+/* ======= image load ======= */
+photo.addEventListener('change', async (e)=>{
   const f=e.target.files[0]; if(!f) return;
   const url=URL.createObjectURL(f);
-  const im=new Image(); im.onload=()=>{
+  const im = new Image(); im.onload=async ()=>{
     preview.src=url; preview.style.display='block';
-    const mat=cv.imread(im);
-    current={mat};
-    sizeOverlayToImage(mat.cols, mat.rows);
-    resetEverything(false);
-    setStatus('Photo loaded. Tap “Auto detect (normal)”, or use Manual fallback.');
-  };
-  im.onerror=()=>setStatus('Could not load image.');
-  im.src=url;
+    sizeOverlayToImage(im.naturalWidth, im.naturalHeight);
+    clearOverlay(); rois=[]; rowY=[]; wallsPerRow=[]; occ=[];
+    setStatus('Photo loaded. Tap “Run YOLO (Auto)”.');
+  }; im.src=url;
 });
 
-/* ================== Auto detect pipeline ================== */
-btnAuto.addEventListener('click', ()=>{
-  if(!cvReady||!current){ alert('Need OpenCV + a photo.'); return; }
+/* ======= YOLO helpers ======= */
+function letterbox(img, newShape=[640,640]){
+  // Draw to canvas and get pixel data scaled with padding
+  const [w,h]=[img.naturalWidth||img.width, img.naturalHeight||img.height];
+  const [nw,nh]=newShape;
+  const r = Math.min(nw/w, nh/h);
+  const newUnpad=[Math.round(w*r), Math.round(h*r)];
+  const dw = (nw - newUnpad[0]) / 2;
+  const dh = (nh - newUnpad[1]) / 2;
+  const c=document.createElement('canvas'); c.width=nw; c.height=nh;
+  const cx=c.getContext('2d'); cx.fillStyle='rgb(114,114,114)'; cx.fillRect(0,0,nw,nh);
+  cx.drawImage(img, 0,0,w,h, Math.round(dw), Math.round(dh), newUnpad[0], newUnpad[1]);
+  const data = cx.getImageData(0,0,nw,nh).data;
+  // NHWC → NCHW float32, 0..1
+  const out = new Float32Array(1*3*nw*nh); let o=0;
+  for(let y=0;y<nh;y++){
+    for(let x=0;x<nw;x++){
+      const i=(y*nw+x)*4;
+      out[o + (0*nh + y)*nw + x] = data[i]/255;
+      out[o + (1*nh + y)*nw + x] = data[i+1]/255;
+      out[o + (2*nh + y)*nw + x] = data[i+2]/255;
+    }
+  }
+  return {tensor:out, shape:[1,3,nh,nw], r, dw, dh, nw, nh, w0:w, h0:h};
+}
+function nms(boxes, scores, iouThresh=0.45, scoreThresh=0.25){
+  const idx = scores.map((s,i)=>[s,i]).filter(v=>v[0]>=scoreThresh).sort((a,b)=>b[0]-a[0]).map(v=>v[1]);
+  const picked=[];
+  while(idx.length){
+    const i = idx.shift(); picked.push(i);
+    const a=boxes[i];
+    const rest=[];
+    for(const j of idx){
+      const b=boxes[j];
+      const xx1=Math.max(a[0],b[0]), yy1=Math.max(a[1],b[1]);
+      const xx2=Math.min(a[2],b[2]), yy2=Math.min(a[3],b[3]);
+      const w=Math.max(0,xx2-xx1), h=Math.max(0,yy2-yy1);
+      const inter=w*h, iou=inter/(((a[2]-a[0])*(a[3]-a[1]))+((b[2]-b[0])*(b[3]-b[1]))-inter);
+      if(iou<=iouThresh) rest.push(j);
+    }
+    idx.splice(0, idx.length, ...rest);
+  }
+  return picked;
+}
+
+/* ======= run YOLO (phones + number_strips) ======= */
+runBtn.addEventListener('click', async ()=>{
+  if(!session || !preview.src){ alert('Model and photo required.'); return; }
   manual=false; modePill.textContent='Mode: Auto';
+  setStatus('Running YOLO…');
 
-  const src=current.mat;
-  const scale = 1600 / Math.max(src.cols, src.rows);
-  const scaled = new cv.Mat();
-  if(scale<1) cv.resize(src, scaled, new cv.Size(0,0), scale, scale, cv.INTER_AREA);
-  else src.copyTo(scaled);
-
-  // 1) find 5 blue strips in HSV
-  const hsv=new cv.Mat(); cv.cvtColor(scaled,hsv,cv.COLOR_RGBA2RGB); cv.cvtColor(hsv,hsv,cv.COLOR_RGB2HSV);
-  const delta=+blueDelta.value;
-  const lower = new cv.Mat(hsv.rows,hsv.cols,hsv.type(), [100-delta,60,40,0]);
-  const upper = new cv.Mat(hsv.rows,hsv.cols,hsv.type(), [130+delta,255,255,255]);
-  const mask  = new cv.Mat(); cv.inRange(hsv,lower,upper,mask);
-  const k     = cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(21,5));
-  cv.morphologyEx(mask,mask,cv.MORPH_CLOSE,k);
-  cv.morphologyEx(mask,mask,cv.MORPH_OPEN,k);
-
-  const contours=new cv.MatVector(), hier=new cv.Mat();
-  cv.findContours(mask, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-  const bars=[];
-  for(let i=0;i<contours.size();i++){
-    const r=cv.boundingRect(contours.get(i)); const ar=r.width/r.height;
-    if(r.width>scaled.cols*0.35 && r.height>6 && ar>8) bars.push(r);
+  const lb = letterbox(preview, [640,640]);
+  const feeds={ 'images': new ort.Tensor('float32', lb.tensor, lb.shape) };
+  const out = await session.run(feeds);
+  // Assume Ultralytics export signature → output "output0": [1, N, 85] where last 2 classes (phone, number_strip)
+  const det = out[Object.keys(out)[0]].data; // Float32Array
+  const N = det.length / 85;
+  const boxes=[], scores=[], classes=[];
+  for(let i=0;i<N;i++){
+    const base=i*85;
+    const bx=det[base+0], by=det[base+1], bw=det[base+2], bh=det[base+3];
+    const x1=(bx-bw/2 - lb.dw)/lb.r, y1=(by-bh/2 - lb.dh)/lb.r;
+    const x2=(bx+bw/2 - lb.dw)/lb.r, y2=(by+bh/2 - lb.dh)/lb.r;
+    // class scores start at 5
+    const clsScores = det.slice(base+5, base+5+2);
+    let bestC=0, bestS=clsScores[0];
+    if(clsScores[1]>bestS){ bestC=1; bestS=clsScores[1]; }
+    boxes.push([clamp(x1,0,lb.w0), clamp(y1,0,lb.h0), clamp(x2,0,lb.w0), clamp(y2,0,lb.h0)]);
+    scores.push(bestS); classes.push(bestC); // 0=phone,1=number_strip
   }
-  bars.sort((a,b)=>a.y-b.y);
-  if(bars.length>ROWS) bars.splice(ROWS);
-  if(bars.length<ROWS){ setStatus('Could not find 5 blue strips. Raise Blue sensitivity or use Manual.'); cleanup(); return; }
+  const keep = nms(boxes, scores, 0.45, 0.25);
 
-  rowY = bars.map(b=>b.y + b.height/2);
+  const phones=[]; const strips=[];
+  for(const i of keep){
+    const b=boxes[i], conf=scores[i], cls=classes[i];
+    (cls===1 ? strips : phones).push({b,conf});
+  }
+  // cluster 5 strips by y center
+  if(strips.length<3){ setStatus('Not enough number_strip detections. Use Manual fallback.'); return; }
+  strips.sort((a,b)=>((a.b[1]+a.b[3])/2)-((b.b[1]+b.b[3])/2));
+  const centers=strips.map(s=>(s.b[1]+s.b[3])/2);
+  // simple kmeans into 5 rows
+  const rows = kmeans1D(centers, ROWS).centers.sort((a,b)=>a-b);
+  rowY = rows;
+  // for each row, pick the strip(s) close to its center; merge their x-span
+  wallsPerRow=[];
+  for(const y of rowY){
+    const near = strips.filter(s=>Math.abs(((s.b[1]+s.b[3])/2)-y) < 40);
+    const span = near.length ? [
+      Math.min(...near.map(s=>s.b[0])),
+      Math.max(...near.map(s=>s.b[2])),
+      Math.min(...near.map(s=>s.b[1])),
+      Math.max(...near.map(s=>s.b[3]))
+    ] : [10, lb.w0-10, y-10, y+10];
 
-  // 2) for each bar, get 13 walls by snapping to the white tick marks
-  wallsPerRow = [];
-  for(const b of bars){ wallsPerRow.push(getWallsFromBar(scaled, b)); }
+    // use OpenCV to find 13 vertical tick walls inside the strip span
+    const walls = getWallsFromStripRegion(span);
+    wallsPerRow.push(walls);
+  }
 
-  // 3) build slots & draw
-  buildROIsFromRowsAndWalls(rowY, wallsPerRow, scaled.cols, scaled.rows);
-  drawGuides(rowY, wallsPerRow, scaled.cols, scaled.rows);
+  // build ROIs & show
+  buildROIsFromRowsAndWalls(rowY, wallsPerRow, preview.naturalWidth, preview.naturalHeight);
+  drawGuides(rowY, wallsPerRow, preview.naturalWidth, preview.naturalHeight);
 
-  setStatus('Auto done. Drag lines in Manual if anything’s slightly off.');
-  cleanup();
-  function cleanup(){ [scaled,hsv,mask,lower,upper,contours,hier].forEach(m=>{ try{m.delete()}catch{} }); }
+  // store phones for analyze
+  window.__phones = phones.map(p=>({x1:p.b[0],y1:p.b[1],x2:p.b[2],y2:p.b[3]}));
+  setStatus('YOLO done. Click Analyze.');
 });
 
-/* -- wall detection from white tick marks on blue strip -- */
-function getWallsFromBar(img /*cv.Mat RGBA*/, b /*cv.Rect*/){
-  const padX=10, padY=8;
-  const rx=Math.max(0,b.x-padX), ry=Math.max(0,b.y-padY);
-  const rw=Math.min(img.cols-rx, b.width+2*padX);
-  const rh=Math.min(img.rows-ry, b.height+2*padY);
-  const roi  = img.roi(new cv.Rect(rx,ry,rw,rh));
-
-  const gray=new cv.Mat(); cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
-  const norm=new cv.Mat(); cv.normalize(gray, norm, 0, 255, cv.NORM_MINMAX);
-  const th=new cv.Mat();   cv.threshold(norm, th, 0, 255, cv.THRESH_BINARY|cv.THRESH_OTSU);
-
-  const k  = cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(3,9));
-  const k2 = cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(1,7));
-  const m1=new cv.Mat(); cv.morphologyEx(th, m1, cv.MORPH_OPEN, k);
-  const m2=new cv.Mat(); cv.morphologyEx(m1, m2, cv.MORPH_CLOSE, k2);
-
-  const proj=new Float32Array(rw);
-  for(let x=0;x<rw;x++){ let s=0; for(let y=0;y<rh;y++){ if(m2.ucharPtr(y,x)[0]>0) s++; } proj[x]=s; }
-
-  const sm=new Float32Array(rw);
-  for(let x=0;x<rw;x++){ let s=0,c=0; for(let k=-4;k<=4;k++){const xx=x+k; if(xx>=0&&xx<rw){s+=proj[xx];c++;}} sm[x]=s/c; }
-
-  const walls=[];
-  for(let i=0;i<13;i++){
-    const guess = Math.round(i*(rw-1)/12);
-    let best=guess, bestV=-1;
-    for(let dx=-8;dx<=8;dx++){ const x=Math.max(0,Math.min(rw-1,guess+dx)); if(sm[x]>bestV){bestV=sm[x];best=x;} }
-    walls.push(best + rx);
+function kmeans1D(values, k){
+  values=[...values].sort((a,b)=>a-b);
+  const centers=[]; for(let i=0;i<k;i++) centers.push(values[Math.floor(i*(values.length-1)/(k-1))]);
+  for(let it=0;it<15;it++){
+    const groups=Array.from({length:k},()=>[]);
+    for(const v of values){ let bi=0,bd=Infinity; for(let i=0;i<k;i++){const d=Math.abs(v-centers[i]); if(d<bd){bd=d;bi=i}} groups[bi].push(v); }
+    for(let i=0;i<k;i++){ if(groups[i].length) centers[i]=groups[i].reduce((a,b)=>a+b,0)/groups[i].length; }
   }
-  walls.sort((a,b)=>a-b);
-  for(let i=1;i<walls.length;i++){ if(walls[i]-walls[i-1]<6) walls[i]=walls[i-1]+6; }
-
-  [gray,norm,th,k,k2,m1,m2,roi].forEach(m=>{ try{m.delete()}catch{} });
-  return walls;
+  return {centers};
 }
 
-/* ================== Manual fallback ================== */
-btnManual.addEventListener('click', ()=>{
-  if(!current){ alert('Upload a photo first.'); return; }
-  manual=true; modePill.textContent='Mode: Manual';
-  setStatus('Manual: drag cyan row lines to sit ON the blue number strips. Drag white walls (1 and 12). Then “Analyze”.');
-
-  // init straight grid if needed
-  const W=current.mat.cols, H=current.mat.rows;
-  if(rowY.some(v=>v==null)){ for(let i=0;i<ROWS;i++) rowY[i]=Math.round((i+1)*(H/(ROWS+1))); }
-  const walls = Array.from({length:13},(_,i)=> Math.round(i*(W-1)/12));
-  wallsPerRow = Array.from({length:ROWS},()=>walls);
-  drawGuides(rowY, wallsPerRow, W, H);
-});
-
-// dragging on the overlay (no extra DOM handles)
-let drag = null; // {type:'row'|'wall', row?, wallIdx?}
-overlay.addEventListener('pointerdown', e=>{
-  if(!manual) return;
-  const pt = toImageCoords(e);
-  // nearest row?
-  let bestD=999, bestI=-1;
-  for(let i=0;i<ROWS;i++){ const d=Math.abs(pt.y-rowY[i]); if(d<bestD){bestD=d; bestI=i;} }
-  if(bestD<22){ drag={type:'row', idx:bestI}; return; }
-  // nearest wall (any row shares same walls in manual)
-  let bestW=999, bestWi=-1; const walls=wallsPerRow[0];
-  for(let i=0;i<walls.length;i++){ const d=Math.abs(pt.x-walls[i]); if(d<bestW){bestW=d; bestWi=i;} }
-  if(bestW<22){ drag={type:'wall', idx:bestWi}; return; }
-});
-overlay.addEventListener('pointermove', e=>{
-  if(!manual||!drag) return; const pt=toImageCoords(e);
-  const W=current.mat.cols, H=current.mat.rows;
-  if(drag.type==='row'){ rowY[drag.idx]=clamp(Math.round(pt.y), 0, H-1); }
-  else{
-    const x=clamp(Math.round(pt.x), 0, W-1);
-    for(let r=0;r<ROWS;r++){ wallsPerRow[r][drag.idx]=x; } // keep walls aligned row-wise
+// Use OpenCV on the original image inside the strip span to get 13 vertical walls (tick marks)
+function getWallsFromStripRegion([x1,x2,y1,y2]){
+  if(!cvReady){ // fallback: equal spacing
+    const walls=[]; for(let i=0;i<13;i++) walls.push(x1 + i*(x2-x1)/12); return walls;
   }
-  drawGuides(rowY, wallsPerRow, W, H);
-});
-window.addEventListener('pointerup', ()=>drag=null);
-function toImageCoords(ev){
-  const rect = overlay.getBoundingClientRect();
-  const dpr = window.devicePixelRatio||1;
-  const cw = overlay.width / dpr; const ch = overlay.height / dpr;
-  const x = (ev.clientX - rect.left) / cw * current.mat.cols;
-  const y = (ev.clientY - rect.top ) / ch * current.mat.rows;
-  return {x,y};
+  const W=preview.naturalWidth, H=preview.naturalHeight;
+  const sx=Math.max(0,Math.floor(x1)), ex=Math.min(W,Math.ceil(x2));
+  const sy=Math.max(0,Math.floor(y1-8)), ey=Math.min(H,Math.ceil(y2+8));
+  const w=ex-sx, h=ey-sy; if(w<20||h<6){const walls=[];for(let i=0;i<13;i++) walls.push(x1+i*(x2-x1)/12);return walls;}
+  const c=document.createElement('canvas'); c.width=w; c.height=h; const cx=c.getContext('2d');
+  cx.drawImage(preview, sx,sy,w,h, 0,0,w,h);
+  const imgData=cx.getImageData(0,0,w,h);
+  const mat=cv.matFromImageData(imgData);
+  const gray=new cv.Mat(); cv.cvtColor(mat,gray,cv.COLOR_RGBA2GRAY);
+  const norm=new cv.Mat(); cv.normalize(gray,norm,0,255,cv.NORM_MINMAX);
+  const th=new cv.Mat(); cv.threshold(norm,th,0,255,cv.THRESH_BINARY|cv.THRESH_OTSU);
+  const k=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(3,9));
+  const k2=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(1,7));
+  const m1=new cv.Mat(); cv.morphologyEx(th,m1,cv.MORPH_OPEN,k);
+  const m2=new cv.Mat(); cv.morphologyEx(m1,m2,cv.MORPH_CLOSE,k2);
+  const proj=new Float32Array(w);
+  for(let x=0;x<w;x++){ let s=0; for(let y=0;y<h;y++) if(m2.ucharPtr(y,x)[0]>0) s++; proj[x]=s; }
+  const sm=new Float32Array(w);
+  for(let x=0;x<w;x++){ let s=0,cnt=0; for(let d=-4;d<=4;d++){const xx=x+d; if(xx>=0&&xx<w){s+=proj[xx];cnt++;}} sm[x]=s/cnt;}
+  const walls=[]; for(let i=0;i<13;i++){ const guess=Math.round(i*(w-1)/12); let best=guess,bv=-1; for(let d=-8;d<=8;d++){const x=Math.max(0,Math.min(w-1,guess+d)); if(sm[x]>bv){bv=sm[x];best=x;}} walls.push(sx+best); }
+  [mat,gray,norm,th,k,k2,m1,m2].forEach(m=>m.delete());
+  return walls.sort((a,b)=>a-b);
 }
 
-/* ================== Build ROIs & draw ================== */
+/* ======= build ROIs / draw ======= */
 function buildROIsFromRowsAndWalls(rowsY, perRowWalls, W, H){
   rois=[];
   const gaps=[]; for(let i=1;i<rowsY.length;i++) gaps.push(rowsY[i]-rowsY[i-1]);
-  const avgGap = gaps.length? gaps.reduce((a,b)=>a+b,0)/gaps.length : H/6;
-
+  const avgGap=gaps.length?gaps.reduce((a,b)=>a+b,0)/gaps.length:H/6;
   for(let r=0;r<ROWS;r++){
-    const yB   = rowsY[r];
-    const gap  = (r<ROWS-1? rowsY[r+1]-rowsY[r] : avgGap);
-    const h    = Math.max(10, Math.round(gap * SLOT_H_FRAC));
-    const yT   = Math.max(0, Math.round(yB - h - gap*SLOT_TOP_PAD));
-    const yBot = Math.max(yT+8, Math.round(yB - gap*SLOT_TOP_PAD));
-    const walls = perRowWalls[r];
+    const yB=rowsY[r];
+    const gap=(r<ROWS-1?rowsY[r+1]-rowsY[r]:avgGap);
+    const h=Math.max(10,Math.round(gap*SLOT_H_FRAC));
+    const yT=Math.max(0,Math.round(yB - h - gap*SLOT_TOP_PAD));
+    const yBot=Math.max(yT+8, Math.round(yB - gap*SLOT_TOP_PAD));
+    const walls=perRowWalls[r]||Array.from({length:13},(_,i)=> i*(W-1)/12 );
     for(let c=0;c<COLS;c++){
       const x0=Math.round(walls[c]), x1=Math.round(walls[c+1]);
-      rois.push({x:x0, y:yT, w:Math.max(1,x1-x0), h:yBot - yT, row:r, col:c});
+      rois.push({x:x0,y:yT,w:Math.max(1,x1-x0),h:yBot-yT,row:r,col:c});
     }
   }
 }
@@ -354,18 +361,35 @@ function drawGuides(rowsY, perRowWalls, W, H){
   sizeOverlayToImage(W,H);
   clearOverlay();
   if(showGuides.checked){
-    rowsY.forEach(y=> line(0,y,W,y,'rgba(50,208,255,.95)',2));           // cyan row lines
-    perRowWalls.forEach(w=> w.forEach(x=> line(x,10,x,28,'#ffffff',2))); // white walls
+    rowsY.forEach(y=> line(0,y,W,y,'#32d0ff',2));
+    perRowWalls.forEach(w=>w.forEach(x=> line(x,10,x,28,'#fff',2)));
   }
-  rois.forEach(r=>rect(r));
+  rois.forEach(r=>rect(r,'#fff',1.6));
 }
 
-/* ================== Analyze (seam detector) ================== */
-btnAnalyze.addEventListener('click', ()=>{
-  if(!current || rois.length!==TOTAL){ alert('Run Auto or set lines in Manual first.'); return; }
-  occ = rois.map(r => detectCap(current.mat, r));
-  paintOverlay();
-  const names = namesForBox(boxSel.value||'');
+/* ======= Analyze (map phones → slots + roster) ======= */
+analyzeBtn.addEventListener('click', ()=>{
+  if(!rois.length){ alert('Run YOLO or place lines in Manual.'); return; }
+  const phones = window.__phones || []; // from YOLO
+  occ = rois.map(r=>{
+    const cx=r.x+r.w/2, cy=r.y+r.h/2;
+    // choose phones overlapping at least 15% with slot
+    return phones.some(p=>{
+      const ix1=Math.max(r.x,p.x1), iy1=Math.max(r.y,p.y1);
+      const ix2=Math.min(r.x+r.w,p.x2), iy2=Math.min(r.y+r.h,p.y2);
+      const inter=Math.max(0,ix2-ix1)*Math.max(0,iy2-iy1);
+      const slotA=r.w*r.h;
+      return inter/slotA>=0.15;
+    });
+  });
+
+  clearOverlay();
+  for(let i=0;i<rois.length;i++){
+    const r=rois[i]; ctx.fillStyle = occ[i] ? 'rgba(0,200,0,.35)' : 'rgba(255,0,0,.35)';
+    ctx.fillRect(r.x,r.y,r.w,r.h); rect(r,'#fff',1.4);
+  }
+
+  const names=namesForBox(boxSel.value||'');
   resultsBody.innerHTML='';
   for(let i=0;i<TOTAL;i++){
     const slot=i+1, expected=names[slot]||'';
@@ -376,76 +400,61 @@ btnAnalyze.addEventListener('click', ()=>{
     resultsBody.appendChild(tr);
   }
   [...miniGrid.children].forEach((d,i)=>{ d.classList.toggle('present',!!occ[i]); d.classList.toggle('empty',!occ[i]); });
-  setStatus('Done. Green = phone present, Red = empty.');
+  setStatus('Done. Green = phone, Red = empty.');
 });
-function paintOverlay(){
-  clearOverlay();
-  for(let i=0;i<rois.length;i++){
-    const r=rois[i];
-    ctx.fillStyle = occ[i] ? 'rgba(0,200,0,.35)' : 'rgba(255,0,0,.35)';
-    ctx.fillRect(r.x,r.y,r.w,r.h);
-    rect(r);
-  }
+
+/* ======= Manual fallback (drag directly on overlay) ======= */
+manualBtn.addEventListener('click', ()=>{
+  if(!preview.src){ alert('Upload a photo first.'); return; }
+  manual=true; modePill.textContent='Mode: Manual';
+  const W=preview.naturalWidth, H=preview.naturalHeight;
+  if(!rowY.length){ for(let i=0;i<ROWS;i++) rowY[i]=Math.round((i+1)*(H/(ROWS+1))); }
+  const walls = Array.from({length:13},(_,i)=> Math.round(i*(W-1)/12));
+  wallsPerRow = Array.from({length:ROWS},()=>walls);
+  buildROIsFromRowsAndWalls(rowY, wallsPerRow, W, H);
+  drawGuides(rowY, wallsPerRow, W, H);
+  setStatus('Drag: near a cyan line = move row; near a white line = move wall. Then Analyze.');
+});
+let drag=null;
+overlay.addEventListener('pointerdown', e=>{
+  if(!manual) return;
+  const pt=toImg(e);
+  let bestD=1e9, bi=-1;
+  for(let i=0;i<rowY.length;i++){ const d=Math.abs(pt.y-rowY[i]); if(d<bestD){bestD=d; bi=i;} }
+  if(bestD<22){ drag={type:'row', idx:bi}; return; }
+  // walls share across rows in this tool
+  let bestW=1e9, wi=-1; const w=wallsPerRow[0]||[];
+  for(let i=0;i<w.length;i++){ const d=Math.abs(pt.x-w[i]); if(d<bestW){bestW=d; wi=i;} }
+  if(bestW<22){ drag={type:'wall', idx:wi}; }
+});
+overlay.addEventListener('pointermove', e=>{
+  if(!drag||!manual) return;
+  const pt=toImg(e), W=preview.naturalWidth, H=preview.naturalHeight;
+  if(drag.type==='row'){ rowY[drag.idx]=clamp(Math.round(pt.y),0,H-1); }
+  else{ const x=clamp(Math.round(pt.x),0,W-1); for(let r=0;r<ROWS;r++) wallsPerRow[r][drag.idx]=x; }
+  buildROIsFromRowsAndWalls(rowY, wallsPerRow, W, H);
+  drawGuides(rowY, wallsPerRow, W, H);
+});
+window.addEventListener('pointerup', ()=> drag=null);
+function toImg(ev){
+  const r=overlay.getBoundingClientRect();
+  const dpr=window.devicePixelRatio||1;
+  const cw=overlay.width/dpr, ch=overlay.height/dpr;
+  const x=(ev.clientX-r.left)/cw*preview.naturalWidth;
+  const y=(ev.clientY-r.top )/ch*preview.naturalHeight;
+  return {x,y};
 }
 
-/* --- seam detector: horizontal edge + local darkness --- */
-function detectCap(img, r){
-  const roi = img.roi(new cv.Rect(r.x, r.y, r.w, r.h));
-  const gray = new cv.Mat(); cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
-
-  const y0=Math.round(r.h*0.06), y1=Math.round(r.h*0.60), xL=Math.round(r.w*0.08), xR=Math.round(r.w*0.92);
-  const search = gray.roi(new cv.Rect(xL, y0, Math.max(12,xR-xL), Math.max(12,y1-y0)));
-
-  const sob16=new cv.Mat(), sob=new cv.Mat();
-  cv.Sobel(search, sob16, cv.CV_16S, 0, 1, 3, 1, 0, cv.BORDER_DEFAULT);
-  cv.convertScaleAbs(sob16, sob);
-  const blur=new cv.Mat(); cv.GaussianBlur(sob, blur, new cv.Size(3,3), 0);
-  const thr=new cv.Mat(); cv.threshold(blur, thr, 0, 255, cv.THRESH_BINARY|cv.THRESH_OTSU);
-
-  const hS=thr.rows, wS=thr.cols;
-  const rowFrac=new Float32Array(hS);
-  for(let y=0;y<hS;y++){ const p=thr.ptr(y); let c=0; for(let x=0;x<wS;x++) if(p[x]) c++; rowFrac[y]=c/wS; }
-  const sm=new Float32Array(hS);
-  for(let y=0;y<hS;y++){ let s=0,c=0; for(let k=-3;k<=3;k++){ const yy=y+k; if(yy>=0&&yy<hS){ s+=rowFrac[yy]; c++; } } sm[y]=s/c; }
-  let peakY=0, peakVal=-1; for(let y=0;y<hS;y++){ if(sm[y]>peakVal){ peakVal=sm[y]; peakY=y; } }
-  const seamCoverage=peakVal; const seamY=y0+peakY;
-
-  const refTopH=Math.max(4,Math.round(r.h*0.10));
-  const refTop = gray.roi(new cv.Rect(Math.round(r.w*0.10), 0, Math.round(r.w*0.80), refTopH));
-  const refL   = gray.roi(new cv.Rect(0, y0, Math.max(5,Math.round(r.w*0.10)), Math.max(8,Math.round(r.h*0.25))));
-  const refR   = gray.roi(new cv.Rect(r.w-Math.max(5,Math.round(r.w*0.10)), y0, Math.max(5,Math.round(r.w*0.10)), Math.max(8,Math.round(r.h*0.25))));
-  const stats = m => { const mm=new cv.Mat(), ss=new cv.Mat(); cv.meanStdDev(m,mm,ss); const o={mean:mm.doubleAt(0,0), std:ss.doubleAt(0,0)}; mm.delete(); ss.delete(); return o; };
-  const a=stats(refTop), b=stats(refL), c=stats(refR);
-  const foamMean=(a.mean+b.mean+c.mean)/3, foamStd=Math.max(6,(a.std+b.std+c.std)/3);
-
-  const bandTop=Math.min(r.h-4, seamY + Math.round(r.h*0.02));
-  const bandH=Math.max(6, Math.round(r.h*0.18));
-  const bandY=Math.min(r.h-bandH, bandTop);
-  const band=gray.roi(new cv.Rect(Math.round(r.w*0.12), bandY, Math.round(r.w*0.76), bandH));
-  const bm=new cv.Mat(), bs=new cv.Mat(); cv.meanStdDev(band,bm,bs);
-  const bMean=bm.doubleAt(0,0); bm.delete(); bs.delete();
-  const darkThr = foamMean - 0.9*foamStd - 9;
-  let darkCnt=0; for(let y=0;y<band.rows;y++){ const p=band.ptr(y); for(let x=0;x<band.cols;x++) if(p[x]<darkThr) darkCnt++; }
-  const bandDarkFrac = darkCnt / (band.rows*band.cols);
-
-  const present = (seamCoverage>=0.32 && (foamMean-bMean>=8 || bandDarkFrac>=0.20)) || (seamCoverage>=0.44);
-
-  roi.delete(); gray.delete(); search.delete(); sob16.delete(); sob.delete(); blur.delete(); thr.delete();
-  refTop.delete(); refL.delete(); refR.delete(); band.delete();
-  return present;
-}
-
-/* ================== reset & misc ================== */
-btnReset.addEventListener('click', ()=> resetEverything(true));
-function resetEverything(hideImage){
-  rowY = new Array(ROWS).fill(null); wallsPerRow=[]; rois=[]; occ=[]; manual=false;
-  resultsBody.innerHTML=''; clearOverlay(); modePill.textContent='Mode: Auto';
-  if(hideImage){ preview.style.display='none'; current=null; }
-  setStatus('Reset.');
-}
-
-/* mini grid */
-(function initGrid(){ for(let i=0;i<TOTAL;i++){ const d=document.createElement('div'); d.className='slot'; d.innerHTML=`<span>#${i+1}</span>`; miniGrid.appendChild(d);} })();
+/* ======= reset & grid ======= */
+resetBtn.addEventListener('click', ()=>{
+  rois=[]; rowY=[]; wallsPerRow=[]; occ=[]; manual=false; window.__phones=[];
+  resultsBody.innerHTML=''; clearOverlay(); preview.style.display='none'; photo.value='';
+  setStatus('Reset. Upload a new photo.');
+});
+(function initGrid(){
+  for(let i=0;i<TOTAL;i++){ const d=document.createElement('div'); d.className='slot'; d.innerHTML=`<span>#${i+1}</span>`; miniGrid.appendChild(d); }
+})();
+window.addEventListener('resize', ()=>{ if(preview.src) sizeOverlayToImage(preview.naturalWidth, preview.naturalHeight);});
 </script>
 </body>
 </html>
