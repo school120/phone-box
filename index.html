@@ -55,7 +55,7 @@
     <label>Box</label>
     <select id="box"></select>
 
-    <label>Roster CSV (auto-loads /data/roster.csv)</label>
+    <label>Roster CSV (auto-loads <code>data/roster.csv</code>)</label>
     <div style="display:flex;gap:8px;align-items:center">
       <small id="rosterStatus">Loading…</small>
       <input id="rosterFile" type="file" accept=".csv">
@@ -76,7 +76,7 @@
 
 <!-- onnxruntime-web (WebGL/WebGPU) -->
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/ort.min.js"></script>
-<!-- OpenCV.js for lightweight post-processing (ticks projection) -->
+<!-- OpenCV.js for ticks projection -->
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 <script>
 /* ======= UI refs/state ======= */
@@ -100,7 +100,7 @@ const rosterFile=document.getElementById('rosterFile');
 const rosterStatus=document.getElementById('rosterStatus');
 const boxSel=document.getElementById('box');
 
-let model=null, session=null, current=null; // {img: ImageBitmap, w,h, data:Float32Array, scale, pad}
+let session=null, current=null;
 let rois=[], rowY=[], wallsPerRow=[], occ=[];
 let manual=false, cvReady=false, roster=[];
 
@@ -120,12 +120,14 @@ function line(x1,y1,x2,y2,style='#32d0ff',lw=2){ ctx.strokeStyle=style; ctx.line
 function rect(r,style='#fff',lw=1.6){ ctx.strokeStyle=style; ctx.lineWidth=lw/(window.devicePixelRatio||1); ctx.strokeRect(r.x,r.y,r.w,r.h); }
 function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
 
-/* ======= box options + roster load ======= */
+/* ======= box options ======= */
 (function boxes(){
   const ids=[], grades=['9','10','11','12'], letters=['A','B','C','D','E','F'];
   grades.forEach(g=>letters.forEach(l=>ids.push(g+l))); ids.push('SM1','SM2');
   boxSel.innerHTML=ids.map(x=>`<option>${x}</option>`).join('');
 })();
+
+/* ======= CSV parser & roster ======= */
 function parseCSV(text){
   const rows=[]; let row=[],cur='',q=false; const push=()=>{row.push(cur);cur='';};
   for(let i=0;i<text.length;i++){
@@ -139,17 +141,36 @@ function parseCSV(text){
   return rows.filter(r=>r.some(x=>x&&x.trim()!=='')).map(r=>{const o={}; header.forEach((h,i)=>o[h]=r[i]||''); return o;});
 }
 async function loadRoster(){
-  rosterStatus.textContent='Loading /data/roster.csv…';
-  try{
-    const res=await fetch('/data/roster.csv',{cache:'no-store'});
-    if(res.ok){ roster=parseCSV(await res.text()); rosterStatus.textContent='Loaded ✓'; return; }
-  }catch{}
-  rosterStatus.textContent='Could not load /data/roster.csv (upload below).';
+  const status = (t)=> rosterStatus.textContent=t;
+  // Project-page safe relative path candidates
+  const base = (()=>{
+    const p = window.location.pathname;
+    return p.endsWith('/')? p : p.replace(/[^/]+$/,'');
+  })();
+  const candidates = [
+    'data/roster.csv',
+    './data/roster.csv',
+    base + 'data/roster.csv',
+    '/data/roster.csv'
+  ];
+  status('Loading roster…');
+  for(const url of candidates){
+    try{
+      const res = await fetch(url, {cache:'no-store'});
+      if(res.ok){
+        roster = parseCSV(await res.text());
+        status(`Loaded ✓ (${url})`);
+        return;
+      }
+    }catch(e){ console.warn('Roster fetch failed:', url, e); }
+  }
+  status('Could not load roster (upload below).');
 }
 loadRoster();
 rosterFile.addEventListener('change',()=>{
   const f=rosterFile.files[0]; if(!f) return;
-  const r=new FileReader(); r.onload=()=>{ roster=parseCSV(r.result||''); rosterStatus.textContent='Loaded from file ✓'; };
+  const r=new FileReader();
+  r.onload=()=>{ roster=parseCSV(r.result||''); rosterStatus.textContent='Loaded from file ✓'; };
   r.readAsText(f);
 });
 function namesForBox(id){
@@ -163,19 +184,30 @@ function namesForBox(id){
   return out;
 }
 
-/* ======= load ONNX model ======= */
-(async function init(){
+/* ======= load ONNX model (project-page safe) ======= */
+(async function initModel(){
   setStatus('Loading model…');
-  try{
-    session = await ort.InferenceSession.create('model/box_yolo.onnx', {
-      executionProviders: ['webgpu','wasm','webgl'], graphOptimizationLevel: 'all'
-    });
-    setStatus('Model ready. Upload a photo.');
-    runBtn.disabled=false;
-  }catch(e){
-    console.error(e);
-    setStatus('Could not load model at model/box_yolo.onnx');
+  const base = (()=>{
+    const p = window.location.pathname;
+    return p.endsWith('/')? p : p.replace(/[^/]+$/,'');
+  })();
+  const candidates = [
+    'model/box_yolo.onnx',
+    './model/box_yolo.onnx',
+    base + 'model/box_yolo.onnx'
+  ];
+  for(const url of candidates){
+    try{
+      session = await ort.InferenceSession.create(url, {
+        executionProviders: ['webgpu','wasm','webgl'],
+        graphOptimizationLevel: 'all'
+      });
+      setStatus(`Model ready ✓ (${url}). Upload a photo.`);
+      runBtn.disabled=false;
+      return;
+    }catch(e){ console.warn('Model load failed:', url, e); }
   }
+  setStatus('Could not load model (place it at model/box_yolo.onnx).');
 })();
 
 /* ======= image load ======= */
@@ -192,7 +224,6 @@ photo.addEventListener('change', async (e)=>{
 
 /* ======= YOLO helpers ======= */
 function letterbox(img, newShape=[640,640]){
-  // Draw to canvas and get pixel data scaled with padding
   const [w,h]=[img.naturalWidth||img.width, img.naturalHeight||img.height];
   const [nw,nh]=newShape;
   const r = Math.min(nw/w, nh/h);
@@ -203,7 +234,6 @@ function letterbox(img, newShape=[640,640]){
   const cx=c.getContext('2d'); cx.fillStyle='rgb(114,114,114)'; cx.fillRect(0,0,nw,nh);
   cx.drawImage(img, 0,0,w,h, Math.round(dw), Math.round(dh), newUnpad[0], newUnpad[1]);
   const data = cx.getImageData(0,0,nw,nh).data;
-  // NHWC → NCHW float32, 0..1
   const out = new Float32Array(1*3*nw*nh); let o=0;
   for(let y=0;y<nh;y++){
     for(let x=0;x<nw;x++){
@@ -244,8 +274,7 @@ runBtn.addEventListener('click', async ()=>{
   const lb = letterbox(preview, [640,640]);
   const feeds={ 'images': new ort.Tensor('float32', lb.tensor, lb.shape) };
   const out = await session.run(feeds);
-  // Assume Ultralytics export signature → output "output0": [1, N, 85] where last 2 classes (phone, number_strip)
-  const det = out[Object.keys(out)[0]].data; // Float32Array
+  const det = out[Object.keys(out)[0]].data; // Float32Array [1,N,85]
   const N = det.length / 85;
   const boxes=[], scores=[], classes=[];
   for(let i=0;i<N;i++){
@@ -253,28 +282,27 @@ runBtn.addEventListener('click', async ()=>{
     const bx=det[base+0], by=det[base+1], bw=det[base+2], bh=det[base+3];
     const x1=(bx-bw/2 - lb.dw)/lb.r, y1=(by-bh/2 - lb.dh)/lb.r;
     const x2=(bx+bw/2 - lb.dw)/lb.r, y2=(by+bh/2 - lb.dh)/lb.r;
-    // class scores start at 5
-    const clsScores = det.slice(base+5, base+5+2);
+    const clsScores = det.slice(base+5, base+7); // 2 classes: phone(0), number_strip(1)
     let bestC=0, bestS=clsScores[0];
     if(clsScores[1]>bestS){ bestC=1; bestS=clsScores[1]; }
     boxes.push([clamp(x1,0,lb.w0), clamp(y1,0,lb.h0), clamp(x2,0,lb.w0), clamp(y2,0,lb.h0)]);
-    scores.push(bestS); classes.push(bestC); // 0=phone,1=number_strip
+    scores.push(bestS); classes.push(bestC);
   }
   const keep = nms(boxes, scores, 0.45, 0.25);
-
   const phones=[]; const strips=[];
   for(const i of keep){
     const b=boxes[i], conf=scores[i], cls=classes[i];
     (cls===1 ? strips : phones).push({b,conf});
   }
-  // cluster 5 strips by y center
   if(strips.length<3){ setStatus('Not enough number_strip detections. Use Manual fallback.'); return; }
+
+  // Cluster strips into 5 rows
   strips.sort((a,b)=>((a.b[1]+a.b[3])/2)-((b.b[1]+b.b[3])/2));
   const centers=strips.map(s=>(s.b[1]+s.b[3])/2);
-  // simple kmeans into 5 rows
   const rows = kmeans1D(centers, ROWS).centers.sort((a,b)=>a-b);
   rowY = rows;
-  // for each row, pick the strip(s) close to its center; merge their x-span
+
+  // For each row, merge x-span of nearby strips; then get 13 tick walls
   wallsPerRow=[];
   for(const y of rowY){
     const near = strips.filter(s=>Math.abs(((s.b[1]+s.b[3])/2)-y) < 40);
@@ -285,12 +313,11 @@ runBtn.addEventListener('click', async ()=>{
       Math.max(...near.map(s=>s.b[3]))
     ] : [10, lb.w0-10, y-10, y+10];
 
-    // use OpenCV to find 13 vertical tick walls inside the strip span
     const walls = getWallsFromStripRegion(span);
     wallsPerRow.push(walls);
   }
 
-  // build ROIs & show
+  // Build ROIs & draw
   buildROIsFromRowsAndWalls(rowY, wallsPerRow, preview.naturalWidth, preview.naturalHeight);
   drawGuides(rowY, wallsPerRow, preview.naturalWidth, preview.naturalHeight);
 
@@ -312,7 +339,7 @@ function kmeans1D(values, k){
 
 // Use OpenCV on the original image inside the strip span to get 13 vertical walls (tick marks)
 function getWallsFromStripRegion([x1,x2,y1,y2]){
-  if(!cvReady){ // fallback: equal spacing
+  if(!cvReady){
     const walls=[]; for(let i=0;i<13;i++) walls.push(x1 + i*(x2-x1)/12); return walls;
   }
   const W=preview.naturalWidth, H=preview.naturalHeight;
@@ -369,17 +396,15 @@ function drawGuides(rowsY, perRowWalls, W, H){
 
 /* ======= Analyze (map phones → slots + roster) ======= */
 analyzeBtn.addEventListener('click', ()=>{
-  if(!rois.length){ alert('Run YOLO or place lines in Manual.'); return; }
-  const phones = window.__phones || []; // from YOLO
+  if(!rois.length){ alert('Run YOLO or use Manual to place lines.'); return; }
+  const phones = window.__phones || [];
   occ = rois.map(r=>{
-    const cx=r.x+r.w/2, cy=r.y+r.h/2;
-    // choose phones overlapping at least 15% with slot
     return phones.some(p=>{
       const ix1=Math.max(r.x,p.x1), iy1=Math.max(r.y,p.y1);
       const ix2=Math.min(r.x+r.w,p.x2), iy2=Math.min(r.y+r.h,p.y2);
       const inter=Math.max(0,ix2-ix1)*Math.max(0,iy2-iy1);
       const slotA=r.w*r.h;
-      return inter/slotA>=0.15;
+      return inter/slotA>=0.15; // overlap threshold
     });
   });
 
@@ -399,11 +424,11 @@ analyzeBtn.addEventListener('click', ()=>{
     tr.innerHTML=`<td>${slot}</td><td>${expected}</td><td><span class="pill">${status}</span></td>`;
     resultsBody.appendChild(tr);
   }
-  [...miniGrid.children].forEach((d,i)=>{ d.classList.toggle('present',!!occ[i]); d.classList.toggle('empty',!occ[i]); });
+  [...miniGrid.children].forEach((d,i)=>{ d.classList.toggle('present',!!occ[i]); d.classList.toggle('empty',!!occ[i]===false); d.classList.toggle('empty',!occ[i]); });
   setStatus('Done. Green = phone, Red = empty.');
 });
 
-/* ======= Manual fallback (drag directly on overlay) ======= */
+/* ======= Manual fallback (drag) ======= */
 manualBtn.addEventListener('click', ()=>{
   if(!preview.src){ alert('Upload a photo first.'); return; }
   manual=true; modePill.textContent='Mode: Manual';
@@ -413,7 +438,7 @@ manualBtn.addEventListener('click', ()=>{
   wallsPerRow = Array.from({length:ROWS},()=>walls);
   buildROIsFromRowsAndWalls(rowY, wallsPerRow, W, H);
   drawGuides(rowY, wallsPerRow, W, H);
-  setStatus('Drag: near a cyan line = move row; near a white line = move wall. Then Analyze.');
+  setStatus('Drag near a cyan line to move a row; near a white line to move a wall, then Analyze.');
 });
 let drag=null;
 overlay.addEventListener('pointerdown', e=>{
@@ -422,7 +447,6 @@ overlay.addEventListener('pointerdown', e=>{
   let bestD=1e9, bi=-1;
   for(let i=0;i<rowY.length;i++){ const d=Math.abs(pt.y-rowY[i]); if(d<bestD){bestD=d; bi=i;} }
   if(bestD<22){ drag={type:'row', idx:bi}; return; }
-  // walls share across rows in this tool
   let bestW=1e9, wi=-1; const w=wallsPerRow[0]||[];
   for(let i=0;i<w.length;i++){ const d=Math.abs(pt.x-w[i]); if(d<bestW){bestW=d; wi=i;} }
   if(bestW<22){ drag={type:'wall', idx:wi}; }
@@ -451,9 +475,7 @@ resetBtn.addEventListener('click', ()=>{
   resultsBody.innerHTML=''; clearOverlay(); preview.style.display='none'; photo.value='';
   setStatus('Reset. Upload a new photo.');
 });
-(function initGrid(){
-  for(let i=0;i<TOTAL;i++){ const d=document.createElement('div'); d.className='slot'; d.innerHTML=`<span>#${i+1}</span>`; miniGrid.appendChild(d); }
-})();
+(function initGrid(){ for(let i=0;i<TOTAL;i++){ const d=document.createElement('div'); d.className='slot'; d.innerHTML=`<span>#${i+1}</span>`; miniGrid.appendChild(d);} })();
 window.addEventListener('resize', ()=>{ if(preview.src) sizeOverlayToImage(preview.naturalWidth, preview.naturalHeight);});
 </script>
 </body>
