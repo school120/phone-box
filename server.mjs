@@ -4,9 +4,9 @@ import cors from 'cors';
 
 const app = express();
 
-// Ollama Cloud config via environment variables on your host
+// Env vars (set these on Render/Railway/etc.)
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma3'; // pick a vision-capable cloud model
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llava'; // use a real vision model
 const OLLAMA_BASE_URL = 'https://ollama.com/api';
 
 app.use(cors());
@@ -23,13 +23,12 @@ app.post('/api/analyze-cabinet', async (req, res) => {
       return res.status(500).json({ error: 'Missing OLLAMA_API_KEY on the server' });
     }
 
-    // imageData is a data URL: data:image/jpeg;base64,xxxx...
+    // data URL -> base64
     const base64 = imageData.split(',')[1];
     if (!base64) {
       return res.status(400).json({ error: 'Invalid image data URL' });
     }
 
-    // Strict prompt to force JSON output
     const strictPrompt = `
 You are analyzing a phone storage cabinet image.
 
@@ -46,12 +45,10 @@ IMPORTANT:
   }
 `;
 
-    // Call Ollama Cloud /api/chat with a vision model and base64 image
     const ollamaResponse = await fetch(`${OLLAMA_BASE_URL}/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // Cloud auth: Bearer OLLAMA_API_KEY
         'Authorization': `Bearer ${OLLAMA_API_KEY}`,
       },
       body: JSON.stringify({
@@ -60,9 +57,9 @@ IMPORTANT:
           {
             role: 'user',
             content: strictPrompt,
-            images: [base64], // base64-encoded image
           },
         ],
+        images: [base64],  // <--- correctly placed here
         stream: false,
       }),
     });
@@ -74,7 +71,6 @@ IMPORTANT:
 
     const data = await ollamaResponse.json();
 
-    // Try to extract text from common shapes
     let textResponse = '';
     if (data.message?.content) {
       textResponse = String(data.message.content).trim();
@@ -86,7 +82,6 @@ IMPORTANT:
       textResponse = JSON.stringify(data);
     }
 
-    // Parse JSON from the model
     let parsed;
     try {
       parsed = JSON.parse(textResponse);
