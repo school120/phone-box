@@ -7,8 +7,11 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Your HuggingFace token (set this in Render)
 const HF_TOKEN = process.env.HF_TOKEN;
-const MODEL_URL = "https://api-inference.huggingface.co/models/Qwen/Qwen2-VL-7B-Instruct";
+
+// NEW router API endpoint (free tier)
+const MODEL_URL = "https://router.huggingface.co/hf-inference/models/Qwen/Qwen2-VL-7B-Instruct";
 
 app.post('/api/analyze-cabinet', async (req, res) => {
   try {
@@ -17,17 +20,17 @@ app.post('/api/analyze-cabinet', async (req, res) => {
     if (!HF_TOKEN) {
       return res.status(500).json({ error: 'Missing HF_TOKEN on the server' });
     }
-
     if (!imageData || !prompt) {
       return res.status(400).json({ error: 'Missing imageData or prompt' });
     }
 
+    // Convert Data URL -> base64
     const base64 = imageData.split(',')[1];
     if (!base64) {
       return res.status(400).json({ error: 'Invalid image data URL' });
     }
 
-    // strict JSON prompt
+    // Strict JSON formatting instruction
     const strictPrompt = `
 ${prompt}
 
@@ -38,10 +41,10 @@ Respond ONLY with a single JSON object with:
   "totalSlotsVisible": 60,
   "confidence": "high"
 }
-No markdown. No backticks. No text besides JSON.
+No markdown. No backticks. No extra text. JSON ONLY.
 `;
 
-    // Build payload for Qwen2-VL
+    // HF Router requires this payload for multimodal input
     const payload = {
       inputs: {
         text: strictPrompt,
@@ -59,13 +62,13 @@ No markdown. No backticks. No text besides JSON.
     });
 
     if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      throw new Error(`HF error: ${response.status} ${errorText}`);
+      const text = await response.text().catch(() => "");
+      throw new Error(`HF error ${response.status}: ${text}`);
     }
 
     const result = await response.json();
 
-    // Qwen returns text content, not structured
+    // Qwen returns: [{generated_text: "..."}]
     let answer = "";
     if (Array.isArray(result) && result[0]?.generated_text) {
       answer = result[0].generated_text.trim();
@@ -75,11 +78,11 @@ No markdown. No backticks. No text besides JSON.
       answer = JSON.stringify(result);
     }
 
-    // Extract JSON portion
+    // Extract JSON
     let parsed;
     try {
       parsed = JSON.parse(answer);
-    } catch {
+    } catch (e) {
       const match = answer.match(/\{[\s\S]*\}/);
       if (match) parsed = JSON.parse(match[0]);
       else throw new Error("Could not parse JSON: " + answer.slice(0, 200));
@@ -99,5 +102,5 @@ No markdown. No backticks. No text besides JSON.
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`phone-box backend (HF vision) running on port ${PORT}`);
+  console.log(`phone-box backend (HF Router Vision) running on port ${PORT}`);
 });
