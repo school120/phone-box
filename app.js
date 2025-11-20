@@ -56,7 +56,6 @@ export default function PhoneCabinetScanner() {
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target.result;
-      // Parse absent list - can be just names or Person IDs, one per line or CSV
       const lines = text.split(/[\n,]/).map(l => l.trim()).filter(l => l);
       setAbsentStudents(lines);
       setError(null);
@@ -111,7 +110,6 @@ export default function PhoneCabinetScanner() {
     setError(null);
 
     try {
-      // Filter students for selected box
       const boxStudents = students.filter(s => {
         const secNum = s.securityNumber;
         if (selectedBox.startsWith('SM')) {
@@ -120,7 +118,6 @@ export default function PhoneCabinetScanner() {
         return secNum.startsWith(selectedBox);
       });
 
-      // Prepare the API call
       const base64Image = capturedImage.split(',')[1];
       
       const prompt = `You are analyzing a phone storage cabinet. This cabinet has numbered slots arranged in rows.
@@ -183,7 +180,6 @@ List only the slot numbers that are clearly empty.`;
       try {
         parsed = JSON.parse(responseText);
       } catch {
-        // Try to extract JSON from markdown
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           parsed = JSON.parse(jsonMatch[0]);
@@ -192,12 +188,10 @@ List only the slot numbers that are clearly empty.`;
         }
       }
 
-      // Match empty slots to students
       const missingStudents = parsed.emptySlots
         .map(slot => {
           return boxStudents.find(s => {
             const secNum = s.securityNumber;
-            // Handle different formats: 9A1, SM1-37, etc.
             const slotMatch = secNum.match(/(\d+)$/);
             if (slotMatch) {
               return parseInt(slotMatch[0]) === slot;
@@ -207,7 +201,6 @@ List only the slot numbers that are clearly empty.`;
         })
         .filter(Boolean);
 
-      // Filter out absent students
       const presentMissing = missingStudents.filter(s => !isStudentAbsent(s));
       const absentMissing = missingStudents.filter(s => isStudentAbsent(s));
 
@@ -241,10 +234,9 @@ List only the slot numbers that are clearly empty.`;
             Phone Cabinet Scanner
           </h1>
           <p className="text-gray-600 mb-6">
-            Scan phone cabinets and identify missing phones (excluding absent students)
+            Scan phone cabinets and identify missing phones
           </p>
 
-          {/* Step 1: Upload CSV or Load from Google Sheets */}
           <div className="mb-6 p-4 bg-gray-50 rounded-lg">
             <label className="block text-sm font-semibold text-gray-700 mb-2">
               Step 1: Load Student Roster
@@ -277,11 +269,10 @@ List only the slot numbers that are clearly empty.`;
             )}
           </div>
 
-          {/* Step 1.5: Upload Absent List (Optional) */}
           <div className="mb-6 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
             <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
               <UserX size={18} className="text-yellow-600" />
-              Optional: Upload Today's Absent List
+              Optional: Upload Absent List
             </label>
             <p className="text-xs text-gray-600 mb-2">
               Upload a text or CSV file with absent student names or IDs (one per line)
@@ -315,7 +306,6 @@ List only the slot numbers that are clearly empty.`;
             )}
           </div>
 
-          {/* Step 2: Select Box */}
           <div className="mb-6 p-4 bg-gray-50 rounded-lg">
             <label className="block text-sm font-semibold text-gray-700 mb-2">
               Step 2: Select Box to Scan
@@ -332,7 +322,6 @@ List only the slot numbers that are clearly empty.`;
             </select>
           </div>
 
-          {/* Step 3: Capture Image */}
           <div className="mb-6 p-4 bg-gray-50 rounded-lg">
             <label className="block text-sm font-semibold text-gray-700 mb-2">
               Step 3: Capture Cabinet Photo
@@ -350,7 +339,7 @@ List only the slot numbers that are clearly empty.`;
                 className="flex-1 bg-gray-600 text-white px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center justify-center gap-2 font-medium"
               >
                 <Upload size={20} />
-                Upload Image
+                Upload
               </button>
             </div>
             <input
@@ -370,7 +359,6 @@ List only the slot numbers that are clearly empty.`;
             />
           </div>
 
-          {/* Preview Image */}
           {capturedImage && (
             <div className="mb-6 relative">
               <img
@@ -387,7 +375,6 @@ List only the slot numbers that are clearly empty.`;
             </div>
           )}
 
-          {/* Analyze Button */}
           {capturedImage && selectedBox && students.length > 0 && !analysis && (
             <button
               onClick={analyzeImage}
@@ -398,7 +385,6 @@ List only the slot numbers that are clearly empty.`;
             </button>
           )}
 
-          {/* Error Message */}
           {error && (
             <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
               <AlertCircle className="text-red-600 flex-shrink-0 mt-0.5" size={20} />
@@ -407,7 +393,6 @@ List only the slot numbers that are clearly empty.`;
           )}
         </div>
 
-        {/* Analysis Results */}
         {analysis && (
           <div className="bg-white rounded-lg shadow-lg p-6">
             <h2 className="text-2xl font-bold text-gray-800 mb-4">
@@ -416,19 +401,18 @@ List only the slot numbers that are clearly empty.`;
             
             <div className="mb-6 p-4 bg-blue-50 rounded-lg">
               <p className="text-sm text-gray-600 mb-1">
-                Empty Slots Detected: <span className="font-bold">{analysis.emptySlots.join(', ')}</span>
+                Empty Slots: <span className="font-bold">{analysis.emptySlots.join(', ')}</span>
               </p>
               <p className="text-sm text-gray-600">
                 Confidence: <span className="font-bold capitalize">{analysis.confidence}</span>
               </p>
             </div>
 
-            {/* Absent Students Notice */}
             {analysis.absentMissing.length > 0 && (
               <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
                 <h4 className="font-semibold text-yellow-800 mb-2 flex items-center gap-2">
                   <UserX size={18} />
-                  Absent Students (Phones Expected to be Missing)
+                  Absent Students ({analysis.absentMissing.length})
                 </h4>
                 <div className="space-y-1">
                   {analysis.absentMissing.map((student, idx) => (
