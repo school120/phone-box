@@ -11,6 +11,11 @@
 </head>
 <body>
     <div id="root"></div>
-    <script type="text/babel" src="app.js"></script>
+    <script type="text/babel">
+        // Copy the entire React component code from the artifact here
+        // Then add at the bottom:
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<PhoneCabinetScanner />);
+    </script>
 </body>
 </html>
