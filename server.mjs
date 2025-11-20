@@ -1,9 +1,13 @@
+// server.mjs
 import express from 'express';
 import cors from 'cors';
-import OpenAI from 'openai';
 
 const app = express();
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Ollama Cloud config via environment variables on your host
+const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma3'; // pick a vision-capable cloud model
+const OLLAMA_BASE_URL = 'https://ollama.com/api';
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -15,38 +19,83 @@ app.post('/api/analyze-cabinet', async (req, res) => {
     if (!imageData || !prompt) {
       return res.status(400).json({ error: 'Missing imageData or prompt' });
     }
+    if (!OLLAMA_API_KEY) {
+      return res.status(500).json({ error: 'Missing OLLAMA_API_KEY on the server' });
+    }
 
-    const response = await client.responses.create({
-      model: 'gpt-4.1-mini',
-      input: [
-        {
-          role: 'user',
-          content: [
-            { type: 'input_text', text: prompt },
-            {
-              type: 'input_image',
-              image_url: {
-                url: imageData,
-                detail: 'high',
-              },
-            },
-          ],
-        },
-      ],
-      max_output_tokens: 300,
+    // imageData is a data URL: data:image/jpeg;base64,xxxx...
+    const base64 = imageData.split(',')[1];
+    if (!base64) {
+      return res.status(400).json({ error: 'Invalid image data URL' });
+    }
+
+    // Strict prompt to force JSON output
+    const strictPrompt = `
+You are analyzing a phone storage cabinet image.
+
+${prompt}
+
+IMPORTANT:
+- Respond ONLY with a single JSON object.
+- No Markdown, no explanation, no backticks.
+- The JSON must have exactly these keys:
+  {
+    "emptySlots": [1, 5, 23],
+    "totalSlotsVisible": 60,
+    "confidence": "high"
+  }
+`;
+
+    // Call Ollama Cloud /api/chat with a vision model and base64 image
+    const ollamaResponse = await fetch(`${OLLAMA_BASE_URL}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // Cloud auth: Bearer OLLAMA_API_KEY
+        'Authorization': `Bearer ${OLLAMA_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        messages: [
+          {
+            role: 'user',
+            content: strictPrompt,
+            images: [base64], // base64-encoded image
+          },
+        ],
+        stream: false,
+      }),
     });
 
-    const text = (response.output_text || '').trim();
+    if (!ollamaResponse.ok) {
+      const errText = await ollamaResponse.text().catch(() => '');
+      throw new Error(`Ollama Cloud error: HTTP ${ollamaResponse.status} ${errText}`);
+    }
 
+    const data = await ollamaResponse.json();
+
+    // Try to extract text from common shapes
+    let textResponse = '';
+    if (data.message?.content) {
+      textResponse = String(data.message.content).trim();
+    } else if (Array.isArray(data.choices) && data.choices[0]?.message?.content) {
+      textResponse = String(data.choices[0].message.content).trim();
+    } else if (typeof data.response === 'string') {
+      textResponse = data.response.trim();
+    } else {
+      textResponse = JSON.stringify(data);
+    }
+
+    // Parse JSON from the model
     let parsed;
     try {
-      parsed = JSON.parse(text);
+      parsed = JSON.parse(textResponse);
     } catch {
-      const match = text.match(/\{[\s\S]*\}/);
+      const match = textResponse.match(/\{[\s\S]*\}/);
       if (match) {
         parsed = JSON.parse(match[0]);
       } else {
-        throw new Error('Could not parse model JSON');
+        throw new Error('Could not parse model JSON: ' + textResponse.slice(0, 200));
       }
     }
 
@@ -62,9 +111,9 @@ app.post('/api/analyze-cabinet', async (req, res) => {
 
     res.json(result);
   } catch (err) {
-    console.error('OpenAI vision error:', err);
+    console.error('Ollama Cloud vision error:', err);
     res.status(500).json({
-      error: 'OpenAI vision call failed',
+      error: 'Vision analysis failed',
       details: err.message,
     });
   }
@@ -72,5 +121,5 @@ app.post('/api/analyze-cabinet', async (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`Backend listening on port ${PORT}`);
+  console.log(`phone-box backend (Ollama Cloud) listening on port ${PORT}`);
 });
