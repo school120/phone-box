@@ -1,14 +1,13 @@
 {
   "name": "phone-box",
-  "version": "1.0.0",
-  "description": "Phone cabinet scanner using OpenAI vision (frontend on GitHub Pages, backend on a Node host).",
+  "version": "1.1.0",
+  "description": "Phone cabinet scanner using Ollama Cloud vision.",
   "type": "module",
   "scripts": {
     "start": "node server.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "openai": "^4.0.0"
+    "express": "^4.19.2"
   }
 }
