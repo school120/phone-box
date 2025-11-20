@@ -4,117 +4,100 @@ import cors from 'cors';
 
 const app = express();
 
-// Env vars (set these on Render/Railway/etc.)
-const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llava'; // use a real vision model
-const OLLAMA_BASE_URL = 'https://ollama.com/api';
-
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+
+const HF_TOKEN = process.env.HF_TOKEN;
+const MODEL_URL = "https://api-inference.huggingface.co/models/Qwen/Qwen2-VL-7B-Instruct";
 
 app.post('/api/analyze-cabinet', async (req, res) => {
   try {
     const { imageData, prompt } = req.body;
 
+    if (!HF_TOKEN) {
+      return res.status(500).json({ error: 'Missing HF_TOKEN on the server' });
+    }
+
     if (!imageData || !prompt) {
       return res.status(400).json({ error: 'Missing imageData or prompt' });
     }
-    if (!OLLAMA_API_KEY) {
-      return res.status(500).json({ error: 'Missing OLLAMA_API_KEY on the server' });
-    }
 
-    // data URL -> base64
     const base64 = imageData.split(',')[1];
     if (!base64) {
       return res.status(400).json({ error: 'Invalid image data URL' });
     }
 
+    // strict JSON prompt
     const strictPrompt = `
-You are analyzing a phone storage cabinet image.
-
 ${prompt}
 
 IMPORTANT:
-- Respond ONLY with a single JSON object.
-- No Markdown, no explanation, no backticks.
-- The JSON must have exactly these keys:
-  {
-    "emptySlots": [1, 5, 23],
-    "totalSlotsVisible": 60,
-    "confidence": "high"
-  }
+Respond ONLY with a single JSON object with:
+{
+  "emptySlots": [...],
+  "totalSlotsVisible": 60,
+  "confidence": "high"
+}
+No markdown. No backticks. No text besides JSON.
 `;
 
-    const ollamaResponse = await fetch(`${OLLAMA_BASE_URL}/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OLLAMA_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: OLLAMA_MODEL,
-        messages: [
-          {
-            role: 'user',
-            content: strictPrompt,
-          },
-        ],
-        images: [base64],  // <--- correctly placed here
-        stream: false,
-      }),
-    });
-
-    if (!ollamaResponse.ok) {
-      const errText = await ollamaResponse.text().catch(() => '');
-      throw new Error(`Ollama Cloud error: HTTP ${ollamaResponse.status} ${errText}`);
-    }
-
-    const data = await ollamaResponse.json();
-
-    let textResponse = '';
-    if (data.message?.content) {
-      textResponse = String(data.message.content).trim();
-    } else if (Array.isArray(data.choices) && data.choices[0]?.message?.content) {
-      textResponse = String(data.choices[0].message.content).trim();
-    } else if (typeof data.response === 'string') {
-      textResponse = data.response.trim();
-    } else {
-      textResponse = JSON.stringify(data);
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(textResponse);
-    } catch {
-      const match = textResponse.match(/\{[\s\S]*\}/);
-      if (match) {
-        parsed = JSON.parse(match[0]);
-      } else {
-        throw new Error('Could not parse model JSON: ' + textResponse.slice(0, 200));
+    // Build payload for Qwen2-VL
+    const payload = {
+      inputs: {
+        text: strictPrompt,
+        image: base64
       }
-    }
-
-    const result = {
-      emptySlots: Array.isArray(parsed.emptySlots) ? parsed.emptySlots : [],
-      totalSlotsVisible:
-        typeof parsed.totalSlotsVisible === 'number'
-          ? parsed.totalSlotsVisible
-          : 60,
-      confidence:
-        typeof parsed.confidence === 'string' ? parsed.confidence : 'unknown',
     };
 
-    res.json(result);
-  } catch (err) {
-    console.error('Ollama Cloud vision error:', err);
-    res.status(500).json({
-      error: 'Vision analysis failed',
-      details: err.message,
+    const response = await fetch(MODEL_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
     });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`HF error: ${response.status} ${errorText}`);
+    }
+
+    const result = await response.json();
+
+    // Qwen returns text content, not structured
+    let answer = "";
+    if (Array.isArray(result) && result[0]?.generated_text) {
+      answer = result[0].generated_text.trim();
+    } else if (result.generated_text) {
+      answer = result.generated_text.trim();
+    } else {
+      answer = JSON.stringify(result);
+    }
+
+    // Extract JSON portion
+    let parsed;
+    try {
+      parsed = JSON.parse(answer);
+    } catch {
+      const match = answer.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[0]);
+      else throw new Error("Could not parse JSON: " + answer.slice(0, 200));
+    }
+
+    res.json({
+      emptySlots: parsed.emptySlots || [],
+      totalSlotsVisible: parsed.totalSlotsVisible || 60,
+      confidence: parsed.confidence || "unknown"
+    });
+
+  } catch (err) {
+    console.error("HF Vision error:", err);
+    res.status(500).json({ error: "Vision analysis failed", details: err.message });
   }
 });
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`phone-box backend (Ollama Cloud) listening on port ${PORT}`);
+  console.log(`phone-box backend (HF vision) running on port ${PORT}`);
 });
