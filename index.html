@@ -25,7 +25,7 @@
   <script type="text/babel">
     const { useState, useRef, useEffect } = React;
 
-    // --- Small inline icons (no external libs) ---
+    // --- Small inline icons ---
     function Icon({ children, className = "", size = 24 }) {
       return (
         <svg
@@ -106,12 +106,12 @@
       return ready;
     }
 
-    // --- CONSTANTS FOR GRID POSITION (TUNE THESE) ---
-    // Fraction of image height/width for the cabinet interior.
-    const ROI_TOP = 0.07;
-    const ROI_BOTTOM = 0.94;
-    const ROI_LEFT = 0.07;
-    const ROI_RIGHT = 0.93;
+    // --- ROI tuned to sit inside the metal frame over the foam slots ---
+    // Adjust these if the grid is still too high/low/left/right.
+    const ROI_TOP = 0.18;    // move grid down from top
+    const ROI_BOTTOM = 0.88; // move grid up from bottom
+    const ROI_LEFT = 0.17;   // move grid right from left edge
+    const ROI_RIGHT = 0.83;  // move grid left from right edge
 
     /**
      * Detect empty slots AND draw overlay on the given canvas.
@@ -129,7 +129,6 @@
           const h = gray.rows;
           const w = gray.cols;
 
-          // Cabinet interior (based on fractions above)
           const top = Math.floor(ROI_TOP * h);
           const bottom = Math.floor(ROI_BOTTOM * h);
           const left = Math.floor(ROI_LEFT * w);
@@ -151,12 +150,10 @@
           let slotNumber = 1;
 
           const ctx = canvas.getContext("2d");
-          // redraw image first so overlays don't stack
-          // (caller is responsible for drawing image before calling this)
           ctx.save();
-          ctx.lineWidth = 2;
-          ctx.strokeStyle = "rgba(0, 255, 0, 0.9)";
-          ctx.font = "18px system-ui, sans-serif";
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = "rgba(0, 255, 0, 0.7)";
+          ctx.font = "16px system-ui, sans-serif";
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
 
@@ -174,17 +171,17 @@
               const globalX = left + x;
               const globalY = top + y;
 
-              // Draw rectangle for this slot
+              // Draw rectangle
               ctx.strokeRect(globalX, globalY, w2, h2);
 
-              // Label slot number
+              // Label slot number in small black box
               ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-              ctx.fillRect(globalX, globalY, 28, 20);
+              ctx.fillRect(globalX, globalY, 26, 18);
               ctx.fillStyle = "white";
               ctx.fillText(
                 slotNumber.toString(),
-                globalX + 14,
-                globalY + 10
+                globalX + 13,
+                globalY + 9
               );
 
               if (cellMean > threshold) {
@@ -307,7 +304,6 @@
         reader.readAsText(file);
       };
 
-      // Draw the captured image into the canvas whenever it changes
       useEffect(() => {
         if (!capturedImage || !canvasRef.current) return;
         const img = new Image();
@@ -361,7 +357,6 @@
         setAnalysis(null);
 
         try {
-          // Redraw the image so overlays don't accumulate
           const img = new Image();
           img.onload = async () => {
             const canvas = canvasRef.current;
@@ -371,12 +366,10 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(img, 0, 0);
 
-            // Filter students in this box
             const boxStudents = students.filter((s) =>
               (s.securityNumber || "").startsWith(selectedBox)
             );
 
-            // Run OpenCV + overlay on the same canvas
             const emptySlots = await detectEmptySlotsOnCanvas(canvas);
 
             const missingStudents = emptySlots
